@@ -1,7 +1,6 @@
 package top.niunaijun.blackboxa.data
 
 import android.content.pm.ApplicationInfo
-import android.net.Uri
 import android.util.Log
 import android.webkit.URLUtil
 import androidx.lifecycle.MutableLiveData
@@ -11,6 +10,7 @@ import top.niunaijun.blackbox.utils.AbiUtils
 import top.niunaijun.blackboxa.R
 import top.niunaijun.blackboxa.app.AppManager
 import top.niunaijun.blackboxa.bean.AppInfo
+import top.niunaijun.blackboxa.container.ContainerInstallCoordinator
 import top.niunaijun.blackboxa.bean.InstalledAppBean
 import top.niunaijun.blackboxa.util.MemoryManager
 import top.niunaijun.blackboxa.util.getString
@@ -390,18 +390,22 @@ class AppsRepository {
                 }
             }
 
-            val blackBoxCore = BlackBoxCore.get()
-            val installResult =
-                    if (URLUtil.isValidUrl(source)) {
-                        val uri = Uri.parse(source)
-                        blackBoxCore.installPackageAsUser(uri, userId)
-                    } else {
-                        blackBoxCore.installPackageAsUser(source, userId)
-                    }
+            val installOutcome = ContainerInstallCoordinator(top.niunaijun.blackboxa.app.App.getContext()).install(source, userId)
+            val installResult = installOutcome.result
 
             if (installResult.success) {
-                updateAppSortList(userId, installResult.packageName, true)
-                resultLiveData.postValue(getString(R.string.install_success))
+                if (!installOutcome.packageName.isNullOrBlank()) {
+                    updateAppSortList(installOutcome.installedUserId, installOutcome.packageName, true)
+                }
+
+                val containerId = installOutcome.containerRecord?.containerId
+                val installMessage =
+                        if (containerId != null) {
+                            "${getString(R.string.install_success)} (user=${installOutcome.installedUserId}, container=$containerId)"
+                        } else {
+                            getString(R.string.install_success)
+                        }
+                resultLiveData.postValue(installMessage)
             } else {
                 resultLiveData.postValue(getString(R.string.install_fail, installResult.msg))
             }
