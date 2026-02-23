@@ -67,4 +67,9 @@
     <string name="disable_gms">Disable Service</string>
     <string name="disable_gms_hint">Clear the current Google service environment? Google service data will be cleared.</string>
     <string name="no_gms">Currently, there is no Google service environment on mobile phones.</string>
+    <string name="app_edit_profile">Edit Clone Profile</string>
+    <string name="app_edit_profile_name">Display Name</string>
+    <string name="app_edit_profile_process">Process Name</string>
+    <string name="app_edit_profile_android_id">Android ID</string>
+    <string name="app_edit_profile_model">Model (e.g. SM-T970N)</string>
 </resources>

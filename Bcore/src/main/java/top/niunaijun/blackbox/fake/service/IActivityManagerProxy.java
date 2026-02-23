@@ -164,7 +164,11 @@ public class IActivityManagerProxy extends ClassInvocationStub {
                             .resolveContentProvider(
                                     (String) auth, GET_META_DATA, BActivityThread.getUserId());
                     if (providerInfo == null) {
-                        
+                        String authority = (String) auth;
+                        if ("com.coupang.rlux.provider.SharedPcidContentProvider".equals(authority)) {
+                            Slog.w(TAG, "GetContentProvider: missing provider " + authority + ", returning null (graceful)");
+                            return null;
+                        }
                         return null;
                     }
 

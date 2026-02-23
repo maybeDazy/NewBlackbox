@@ -248,7 +248,7 @@ class MainActivity : LoadingActivity() {
 
     private fun initToolbarSubTitle() {
         try {
-            updateUserRemark(0)
+            updateUserRemark(-1)
             
             viewBinding.toolbarLayout.toolbar.getChildAt(1)?.setOnClickListener {
                 try {
@@ -281,30 +281,15 @@ class MainActivity : LoadingActivity() {
 
     private fun initViewPager() {
         try {
-            val userList = BlackBoxCore.get().users
-            userList.forEach { fragmentList.add(AppsFragment.newInstance(it.id)) }
-
-            currentUser = userList.firstOrNull()?.id ?: 0
-            fragmentList.add(AppsFragment.newInstance(userList.size))
+            fragmentList.clear()
+            fragmentList.add(AppsFragment.newInstance(-1))
+            currentUser = -1
 
             mViewPagerAdapter = ViewPagerAdapter(this)
             mViewPagerAdapter.replaceData(fragmentList)
             viewBinding.viewPager.adapter = mViewPagerAdapter
-            viewBinding.dotsIndicator.setViewPager2(viewBinding.viewPager)
-            viewBinding.viewPager.registerOnPageChangeCallback(
-                    object : ViewPager2.OnPageChangeCallback() {
-                        override fun onPageSelected(position: Int) {
-                            try {
-                                super.onPageSelected(position)
-                                currentUser = fragmentList[position].userID
-                                updateUserRemark(currentUser)
-                                showFloatButton(true)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error in onPageSelected: ${e.message}")
-                            }
-                        }
-                    }
-            )
+            viewBinding.dotsIndicator.visibility = android.view.View.GONE
+            updateUserRemark(currentUser)
         } catch (e: Exception) {
             Log.e(TAG, "Error in initViewPager: ${e.message}")
         }
@@ -314,7 +299,7 @@ class MainActivity : LoadingActivity() {
         try {
             viewBinding.fab.setOnClickListener {
                 try {
-                    val userId = viewBinding.viewPager.currentItem
+                    val userId = if (currentUser < 0) 0 else currentUser
                     val intent = Intent(this, ListActivity::class.java)
                     intent.putExtra("userID", userId)
                     apkPathResult.launch(intent)
@@ -343,14 +328,6 @@ class MainActivity : LoadingActivity() {
 
     fun scanUser() {
         try {
-            val userList = BlackBoxCore.get().users
-
-            if (fragmentList.size == userList.size) {
-                fragmentList.add(AppsFragment.newInstance(fragmentList.size))
-            } else if (fragmentList.size > userList.size + 1) {
-                fragmentList.removeLast()
-            }
-
             mViewPagerAdapter.notifyDataSetChanged()
         } catch (e: Exception) {
             Log.e(TAG, "Error in scanUser: ${e.message}")
@@ -359,6 +336,10 @@ class MainActivity : LoadingActivity() {
 
     private fun updateUserRemark(userId: Int) {
         try {
+            if (userId < 0) {
+                viewBinding.toolbarLayout.toolbar.subtitle = "All Users"
+                return
+            }
             var remark =
                     AppManager.mRemarkSharedPreferences.getString("Remark$userId", "User $userId")
             if (remark.isNullOrEmpty()) {
@@ -368,7 +349,7 @@ class MainActivity : LoadingActivity() {
             viewBinding.toolbarLayout.toolbar.subtitle = remark
         } catch (e: Exception) {
             Log.e(TAG, "Error updating user remark: ${e.message}")
-            viewBinding.toolbarLayout.toolbar.subtitle = "User $userId"
+            viewBinding.toolbarLayout.toolbar.subtitle = if (userId < 0) "All Users" else "User $userId"
         }
     }
 
@@ -380,7 +361,7 @@ class MainActivity : LoadingActivity() {
                             val userId = data.getIntExtra("userID", 0)
                             val source = data.getStringExtra("source")
                             if (source != null) {
-                                fragmentList[userId].installApk(source)
+                                fragmentList.firstOrNull()?.installApk(source)
                             }
                         }
                     }
