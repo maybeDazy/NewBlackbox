@@ -15,12 +15,17 @@ class ContainerRegistryDbHelper(context: Context) :
                 package_name TEXT NOT NULL,
                 display_name TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
-                state TEXT NOT NULL DEFAULT 'ACTIVE'
+                state TEXT NOT NULL DEFAULT 'ACTIVE',
+                virtual_user_id INTEGER NOT NULL DEFAULT 0,
+                source TEXT
             )
             """.trimIndent()
         )
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS idx_containers_package_name ON containers(package_name)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_containers_user_package ON containers(virtual_user_id, package_name)"
         )
     }
 
@@ -28,6 +33,13 @@ class ContainerRegistryDbHelper(context: Context) :
         if (oldVersion < 2) {
             db.execSQL(
                 "CREATE INDEX IF NOT EXISTS idx_containers_package_name ON containers(package_name)"
+            )
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE containers ADD COLUMN virtual_user_id INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE containers ADD COLUMN source TEXT")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS idx_containers_user_package ON containers(virtual_user_id, package_name)"
             )
         }
     }
@@ -40,6 +52,6 @@ class ContainerRegistryDbHelper(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "container_registry.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
     }
 }

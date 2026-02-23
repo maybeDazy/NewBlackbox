@@ -18,7 +18,12 @@ class ContainerRegistry(context: Context) {
     }
 
     @Throws(IOException::class)
-    fun createContainer(packageName: String, displayName: String): ContainerRecord {
+    fun createContainer(
+        packageName: String,
+        displayName: String,
+        virtualUserId: Int,
+        source: String?,
+    ): ContainerRecord {
         val containerId = UUID.randomUUID().toString()
         val createdAt = System.currentTimeMillis()
 
@@ -30,6 +35,8 @@ class ContainerRegistry(context: Context) {
             put("display_name", displayName)
             put("created_at", createdAt)
             put("state", "ACTIVE")
+            put("virtual_user_id", virtualUserId)
+            put("source", source)
         }
 
         try {
@@ -47,7 +54,42 @@ class ContainerRegistry(context: Context) {
             displayName = displayName,
             createdAt = createdAt,
             state = "ACTIVE",
+            virtualUserId = virtualUserId,
+            source = source,
         )
+    }
+
+    fun findContainer(packageName: String, virtualUserId: Int): ContainerRecord? {
+        val db = dbHelper.readableDatabase
+        return db.query(
+            "containers",
+            arrayOf(
+                "container_id",
+                "package_name",
+                "display_name",
+                "created_at",
+                "state",
+                "virtual_user_id",
+                "source",
+            ),
+            "package_name=? AND virtual_user_id=?",
+            arrayOf(packageName, virtualUserId.toString()),
+            null,
+            null,
+            "created_at DESC",
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            ContainerRecord(
+                containerId = cursor.getString(0),
+                packageName = cursor.getString(1),
+                displayName = cursor.getString(2),
+                createdAt = cursor.getLong(3),
+                state = cursor.getString(4),
+                virtualUserId = cursor.getInt(5),
+                source = cursor.getString(6),
+            )
+        }
     }
 
     fun listContainers(packageName: String? = null): List<ContainerRecord> {
@@ -57,7 +99,15 @@ class ContainerRegistry(context: Context) {
 
         return db.query(
             "containers",
-            arrayOf("container_id", "package_name", "display_name", "created_at", "state"),
+            arrayOf(
+                "container_id",
+                "package_name",
+                "display_name",
+                "created_at",
+                "state",
+                "virtual_user_id",
+                "source",
+            ),
             selection,
             args,
             null,
@@ -74,6 +124,8 @@ class ContainerRegistry(context: Context) {
                             displayName = cursor.getString(2),
                             createdAt = cursor.getLong(3),
                             state = cursor.getString(4),
+                            virtualUserId = cursor.getInt(5),
+                            source = cursor.getString(6),
                         )
                     )
                 } catch (e: Exception) {
