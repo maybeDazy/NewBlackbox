@@ -12,6 +12,7 @@ import top.niunaijun.blackbox.fake.hook.ClassInvocationStub;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
 import top.niunaijun.blackbox.utils.Slog;
+import top.niunaijun.blackbox.utils.CloneProfileConfig;
 
 
 public class ISettingsProviderProxy extends ClassInvocationStub {
@@ -41,11 +42,15 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             try {
                 
-                if (args != null && args.length > 0) {
-                    String key = (String) args[0];
-                    if (key != null && key.contains("feature_flag")) {
-                        Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
-                        return "true"; 
+                String key = extractSettingKey(args);
+                if (key != null && key.contains("feature_flag")) {
+                    Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
+                    return "true";
+                }
+                if (Settings.Secure.ANDROID_ID.equalsIgnoreCase(key)) {
+                    String spoofed = CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
+                    if (spoofed != null) {
+                        return spoofed;
                     }
                 }
                 
@@ -68,11 +73,15 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             try {
                 
-                if (args != null && args.length > 0) {
-                    String key = (String) args[0];
-                    if (key != null && key.contains("feature_flag")) {
-                        Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
-                        return "true"; 
+                String key = extractSettingKey(args);
+                if (key != null && key.contains("feature_flag")) {
+                    Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
+                    return "true";
+                }
+                if (Settings.Secure.ANDROID_ID.equalsIgnoreCase(key)) {
+                    String spoofed = CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
+                    if (spoofed != null) {
+                        return spoofed;
                     }
                 }
                 
@@ -189,5 +198,11 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                 throw e;
             }
         }
+    }
+    private static String extractSettingKey(Object[] args) {
+        if (args == null || args.length == 0 || !(args[0] instanceof String)) {
+            return null;
+        }
+        return (String) args[0];
     }
 }
