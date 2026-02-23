@@ -31,6 +31,8 @@ public class ActivityManagerCommonProxy {
     private static final String ACTION_REQUEST_PERMISSIONS = "android.content.pm.action.REQUEST_PERMISSIONS";
     private static long sLastPermissionRequestUptime;
     private static String sLastPermissionRequestKey;
+    private static long sLastProxyLaunchUptime;
+    private static String sLastProxyLaunchKey;
 
 
     @ProxyMethod("startActivity")
@@ -43,6 +45,11 @@ public class ActivityManagerCommonProxy {
             assert intent != null;
             
             
+            if (isRapidDuplicateProxyLaunch(intent)) {
+                Slog.w(TAG, "Dropped rapid duplicate proxy launch: " + intent);
+                return 0;
+            }
+
             if (intent.getParcelableExtra("_B_|_target_") != null) {
                 return method.invoke(who, args);
             }
@@ -231,6 +238,31 @@ public class ActivityManagerCommonProxy {
             return BlackBoxCore.getBActivityManager().getCallingActivity((IBinder) args[0], BActivityThread.getUserId());
         }
     }
+
+    private static boolean isRapidDuplicateProxyLaunch(Intent intent) {
+        if (intent == null) return false;
+        ComponentName component = intent.getComponent();
+        if (component == null) return false;
+
+        String cls = component.getClassName();
+        if (cls == null || !cls.contains("top.niunaijun.blackbox.proxy.ProxyActivity$P")) {
+            return false;
+        }
+
+        Intent target = intent.getParcelableExtra("_B_|_target_");
+        String targetCmp = target != null && target.getComponent() != null
+                ? target.getComponent().flattenToShortString() : "null";
+        String key = BActivityThread.getAppPackageName() + "@" + BActivityThread.getUserId() + "@" + cls + "@" + targetCmp;
+
+        long now = SystemClock.elapsedRealtime();
+        synchronized (ActivityManagerCommonProxy.class) {
+            boolean duplicated = key.equals(sLastProxyLaunchKey) && (now - sLastProxyLaunchUptime) < 800;
+            sLastProxyLaunchKey = key;
+            sLastProxyLaunchUptime = now;
+            return duplicated;
+        }
+    }
+
     private static boolean isPermissionRequestIntent(Intent intent) {
         if (intent == null) return false;
 
