@@ -44,10 +44,12 @@ class ContainerRegistryDbHelper(context: Context) :
         }
     }
 
-    override fun onOpen(db: SQLiteDatabase) {
-        super.onOpen(db)
-        db.execSQL("PRAGMA journal_mode=WAL")
-        db.execSQL("PRAGMA busy_timeout=3000")
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        db.enableWriteAheadLogging()
+        db.rawQuery("PRAGMA busy_timeout=3000", null).use {
+            // no-op: executing pragma via query API for Android compatibility
+        }
     }
 
     companion object {
