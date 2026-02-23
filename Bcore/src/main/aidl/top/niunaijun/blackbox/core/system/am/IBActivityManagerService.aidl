@@ -44,7 +44,7 @@ interface IBActivityManagerService {
     void onActivityCreated(int taskId, IBinder token, IBinder activityRecord);
     void onActivityResumed(IBinder token);
     void onActivityDestroyed(IBinder token);
-    void onFinishActivity(IBinder token);
+    boolean onFinishActivity(IBinder token);
 
     RunningAppProcessInfo getRunningAppProcesses(String callerPackage, int userId);
     RunningServiceInfo getRunningServices(String callerPackage, int userId);

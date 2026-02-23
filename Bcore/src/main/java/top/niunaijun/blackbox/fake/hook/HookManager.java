@@ -107,6 +107,7 @@ public class HookManager {
 
     public void init() {
         if (BlackBoxCore.get().isBlackProcess() || BlackBoxCore.get().isServerProcess()) {
+            // ★ SQLite WAL 모드 비활성화 훅 추가
             addInjector(new IDisplayManagerProxy());
             addInjector(new OsStub());
             addInjector(new IActivityManagerProxy());
