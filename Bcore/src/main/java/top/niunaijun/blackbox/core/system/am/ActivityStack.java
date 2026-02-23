@@ -16,6 +16,7 @@ import android.os.IInterface;
 import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.util.HashSet;
@@ -53,6 +54,15 @@ public class ActivityStack {
     private final Set<ActivityRecord> mLaunchingActivities = new HashSet<>();
 
     public static final int LAUNCH_TIME_OUT = 0;
+    private static final long STUB_LAUNCH_WINDOW_MS = 1500L;
+    private static final int MAX_STUB_LAUNCHES_IN_WINDOW = 3;
+    private static final Map<String, LaunchWindow> sStubLaunchWindows = new LinkedHashMap<>();
+
+    private static final class LaunchWindow {
+        long startMs;
+        int count;
+    }
+
     private final Handler mHandler = new Handler(Looper.getMainLooper()) {
         @Override
         public void handleMessage(Message msg) {
@@ -365,10 +375,47 @@ public class ActivityStack {
         return getStartStubActivityIntentInner(intent, targetApp.bpid, userId, stubRecord, info);
     }
 
+
+    private boolean allowStubLaunch(Intent shadow, ProxyActivityRecord stubRecord) {
+        if (shadow == null || shadow.getComponent() == null || stubRecord == null || stubRecord.mActivityInfo == null) {
+            return true;
+        }
+
+        String key = shadow.getComponent().flattenToShortString()
+                + "@" + stubRecord.mActivityInfo.packageName
+                + "/" + stubRecord.mActivityInfo.name
+                + "@u" + stubRecord.mUserId;
+        long now = SystemClock.elapsedRealtime();
+        synchronized (sStubLaunchWindows) {
+            LaunchWindow launchWindow = sStubLaunchWindows.get(key);
+            if (launchWindow == null) {
+                launchWindow = new LaunchWindow();
+                launchWindow.startMs = now;
+                launchWindow.count = 1;
+                sStubLaunchWindows.put(key, launchWindow);
+                return true;
+            }
+
+            if (now - launchWindow.startMs > STUB_LAUNCH_WINDOW_MS) {
+                launchWindow.startMs = now;
+                launchWindow.count = 1;
+                return true;
+            }
+
+            launchWindow.count++;
+            return launchWindow.count <= MAX_STUB_LAUNCHES_IN_WINDOW;
+        }
+    }
+
     private int startActivityInNewTaskLocked(int userId, Intent intent, ActivityInfo
             activityInfo, IBinder resultTo, int launchMode) {
         ActivityRecord record = newActivityRecord(intent, activityInfo, resultTo, userId);
+        ProxyActivityRecord stubRecord = new ProxyActivityRecord(userId, activityInfo, intent, record);
         Intent shadow = startActivityProcess(userId, intent, activityInfo, record);
+        if (!allowStubLaunch(shadow, stubRecord)) {
+            Slog.w(TAG, "Blocked excessive stub launch in new task: " + shadow.getComponent());
+            return 0;
+        }
 
         shadow.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
         shadow.addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT);
@@ -383,8 +430,13 @@ public class ActivityStack {
                                           IBinder callerToken, IBinder resultToken, String resultWho, int requestCode, int flags,
                                           Bundle options,
                                           int userId, ActivityRecord sourceRecord, ActivityInfo activityInfo, int launchMode) {
-        ActivityRecord selfRecord = newActivityRecord(intent, activityInfo, resultToken, userId);
+        ActivityRecord selfRecord = newActivityRecord(intent, activityInfo, resultTo, userId);
+        ProxyActivityRecord stubRecord = new ProxyActivityRecord(userId, activityInfo, intent, selfRecord);
         Intent shadow = startActivityProcess(userId, intent, activityInfo, selfRecord);
+        if (!allowStubLaunch(shadow, stubRecord)) {
+            Slog.w(TAG, "Blocked excessive stub launch in source task: " + shadow.getComponent());
+            return 0;
+        }
         shadow.setAction(UUID.randomUUID().toString());
         shadow.addFlags(launchMode);
         if (callerToken == null) {

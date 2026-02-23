@@ -3,6 +3,7 @@ package top.niunaijun.blackbox.fake.delegate;
 import android.app.Activity;
 import android.app.Application;
 import android.app.Instrumentation;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
@@ -226,6 +227,34 @@ public final class AppInstrumentation extends BaseInstrumentationDelegate implem
         try {
             return super.newActivity(cl, className, intent);
         } catch (ClassNotFoundException e) {
+            Log.w(TAG, "newActivity class not found: " + className + ", attempting fallback", e);
+
+            String packageName = null;
+            if (intent != null) {
+                if (intent.getComponent() != null) {
+                    packageName = intent.getComponent().getPackageName();
+                }
+                if (packageName == null) {
+                    packageName = intent.getPackage();
+                }
+            }
+
+            if (packageName != null && !packageName.equals(BlackBoxCore.getHostPkg())) {
+                try {
+                    Intent launchIntent = BlackBoxCore.getBPackageManager().getLaunchIntentForPackage(packageName, BActivityThread.getUserId());
+                    if (launchIntent != null && launchIntent.getComponent() != null) {
+                        ComponentName fallbackComponent = launchIntent.getComponent();
+                        if (packageName.equals(fallbackComponent.getPackageName())
+                                && !fallbackComponent.getPackageName().equals(BlackBoxCore.getHostPkg())) {
+                            Log.w(TAG, "Fallback to launch activity: " + fallbackComponent.flattenToShortString());
+                            return super.newActivity(cl, fallbackComponent.getClassName(), intent);
+                        }
+                    }
+                } catch (Throwable fallbackError) {
+                    Log.e(TAG, "Failed to fallback to launch activity for " + packageName, fallbackError);
+                }
+            }
+
             return mBaseInstrumentation.newActivity(cl, className, intent);
         }
     }
