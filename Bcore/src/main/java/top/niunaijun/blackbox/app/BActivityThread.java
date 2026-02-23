@@ -33,6 +33,7 @@ import android.util.Log;
 import android.webkit.WebView;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.security.Security;
 import java.util.ArrayList;
@@ -81,6 +82,7 @@ import top.niunaijun.blackbox.utils.SafeContextWrapper;
 import top.niunaijun.blackbox.utils.GlobalContextWrapper;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.ActivityManagerCompat;
+import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
 import top.niunaijun.blackbox.utils.compat.ContextCompat;
 import top.niunaijun.blackbox.utils.compat.StrictModeCompat;
@@ -178,6 +180,7 @@ public class BActivityThread extends IBActivityThread.Stub {
                 throw new RuntimeException("reject init process: " + appConfig.processName + ", this process is : " + this.mAppConfig.processName);
             }
             this.mAppConfig = appConfig;
+            handleDeviceSpoofing(appConfig);
             IBinder iBinder = asBinder();
             try {
                 iBinder.linkToDeath(new DeathRecipient() {
@@ -358,6 +361,14 @@ public class BActivityThread extends IBActivityThread.Stub {
     public synchronized void handleBindApplication(String packageName, String processName) {
         if (isInit())
             return;
+            
+        Log.d(TAG, "handleBindApplication: " + packageName + " / " + processName);
+
+        // Pre-application locale injection (sets JVM-level defaults before any app code runs)
+        if (isCoupangPackage(packageName)) {
+            applyKoreanLocaleDefaults();
+        }
+
         try {
             CrashHandler.create();
         } catch (Throwable ignored) {
@@ -474,6 +485,14 @@ public class BActivityThread extends IBActivityThread.Stub {
             ContextCompat.fix(mInitialApplication);
             installProviders(mInitialApplication, bindData.processName, bindData.providers);
 
+            // Post-makeApplication hooks: now the guest ClassLoader is available
+            if (isCoupangPackage(packageName)) {
+                // applyLocaleToAppResources(application);
+                // injectCoupangPreferences(application);
+                // blockProcessKill();
+                hookDeviceProtectedStorage(application, packageName);
+            }
+
             onBeforeApplicationOnCreate(packageName, processName, application);
             AppInstrumentation.get().callApplicationOnCreate(application);
             onAfterApplicationOnCreate(packageName, processName, application);
@@ -520,7 +539,6 @@ public class BActivityThread extends IBActivityThread.Stub {
     
     private Application createApplicationWithFallback(android.content.pm.ApplicationInfo appInfo) {
         try {
-            
             Application application = createApplication(appInfo);
             if (application != null) {
                 Slog.d(TAG, "Application created successfully: " + appInfo.className);
@@ -529,48 +547,9 @@ public class BActivityThread extends IBActivityThread.Stub {
         } catch (Exception e) {
             Slog.w(TAG, "Failed to create application normally: " + e.getMessage());
         }
-        
-        try {
-            
-            Slog.d(TAG, "Attempting fallback application creation");
-            ClassLoader classLoader = getClassLoader(appInfo);
-            if (classLoader == null) {
-                Slog.w(TAG, "ClassLoader is null, using system class loader");
-                classLoader = ClassLoader.getSystemClassLoader();
-            }
-            
-            Class<?> appClass = classLoader.loadClass(appInfo.className);
-            Application application = (Application) appClass.newInstance();
-            
-            
-            ensureApplicationBaseContext(application, appInfo);
-            
-            Slog.d(TAG, "Fallback application creation successful");
-            return application;
-            
-        } catch (Exception e) {
-            Slog.e(TAG, "Fallback application creation failed: " + e.getMessage());
-            
-            
-            try {
-                Slog.d(TAG, "Creating minimal application wrapper");
-                Application wrapper = new Application() {
-                    @Override
-                    public void onCreate() {
-                        super.onCreate();
-                        Slog.d(TAG, "Minimal application wrapper onCreate called");
-                    }
-                };
-                
-                
-                ensureApplicationBaseContext(wrapper, appInfo);
-                
-                return wrapper;
-            } catch (Exception wrapperException) {
-                Slog.e(TAG, "Failed to create minimal application wrapper", wrapperException);
-                return null;
-            }
-        }
+
+        Slog.d(TAG, "Using minimal application fallback for " + appInfo.packageName);
+        return createMinimalApplication(createPackageContext(appInfo), appInfo.packageName);
     }
     
     
@@ -1097,6 +1076,27 @@ public class BActivityThread extends IBActivityThread.Stub {
             } else {
                 newIntent = intent;
             }
+            try {
+                Object mainThread = BlackBoxCore.mainThread();
+                Map activities = BRActivityThread.get(mainThread).mActivities();
+                Object record = activities.get(token);
+                if (record != null) {
+                    // Use reflection to get activity reference from ActivityClientRecord
+                    // because BRActivityThread.ActivityClientRecord is not resolving
+                    try {
+                        java.lang.reflect.Field activityField = record.getClass().getDeclaredField("activity");
+                        activityField.setAccessible(true);
+                        android.app.Activity activity = (android.app.Activity) activityField.get(record);
+                        if (activity != null) {
+                            activity.setIntent(newIntent);
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
             Object mainThread = BlackBoxCore.mainThread();
             if (BRActivityThread.get(BlackBoxCore.mainThread())._check_performNewIntents(null, null) != null) {
                 BRActivityThread.get(mainThread).performNewIntents(
@@ -1301,6 +1301,310 @@ public class BActivityThread extends IBActivityThread.Stub {
         } catch (Exception e) {
             Slog.e(TAG, "Error creating minimal application for " + packageName, e);
             return null;
+        }
+    }
+
+    // ============================================================================================
+    // Coupang-specific: Locale, AppRestarter, DE storage hooks
+    // ============================================================================================
+
+    private static boolean isCoupangPackage(String packageName) {
+        return "com.coupang.mobile".equals(packageName)
+                || (packageName != null && packageName.contains("coupang"));
+    }
+
+    /**
+     * Phase 1: Set JVM-level Locale defaults BEFORE any app code loads.
+     * This runs before makeApplication(), so Locale.getDefault() already returns ko_KR
+     * when the Application class initializer runs.
+     */
+    private static void applyKoreanLocaleDefaults() {
+        try {
+            java.util.Locale koKR = new java.util.Locale("ko", "KR");
+            java.util.Locale.setDefault(koKR);
+
+            // Force internal Locale fields via reflection (Android may cache these)
+            for (String fieldName : new String[]{"defaultLocale", "sDefault"}) {
+                try {
+                    java.lang.reflect.Field f = java.util.Locale.class.getDeclaredField(fieldName);
+                    f.setAccessible(true);
+                    f.set(null, koKR);
+                } catch (Throwable ignored) {}
+            }
+
+            // Patch system Resources configuration
+            android.content.res.Resources sysRes = android.content.res.Resources.getSystem();
+            android.content.res.Configuration cfg = new android.content.res.Configuration(sysRes.getConfiguration());
+            cfg.locale = koKR;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                cfg.setLocales(new android.os.LocaleList(koKR));
+            }
+            try {
+                java.lang.reflect.Field f = android.content.res.Configuration.class.getDeclaredField("userSetLocale");
+                f.setAccessible(true);
+                f.setBoolean(cfg, true);
+            } catch (Throwable ignored) {}
+            sysRes.updateConfiguration(cfg, sysRes.getDisplayMetrics());
+
+            Log.d(TAG, "[Coupang] Phase1 locale set: " + java.util.Locale.getDefault());
+        } catch (Throwable e) {
+            Log.e(TAG, "[Coupang] Phase1 locale failed", e);
+        }
+    }
+
+    /**
+     * Phase 2: Patch the Application's own Resources to return ko_KR.
+     * This runs AFTER makeApplication(), so the app's Context and Resources exist.
+     */
+    private static void applyLocaleToAppResources(Application app) {
+        try {
+            java.util.Locale koKR = new java.util.Locale("ko", "KR");
+
+            // 2a. Patch app's own Resources.getConfiguration()
+            android.content.res.Resources appRes = app.getResources();
+            if (appRes != null) {
+                android.content.res.Configuration appCfg = new android.content.res.Configuration(appRes.getConfiguration());
+                appCfg.locale = koKR;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    appCfg.setLocales(new android.os.LocaleList(koKR));
+                }
+                try {
+                    java.lang.reflect.Field f = android.content.res.Configuration.class.getDeclaredField("userSetLocale");
+                    f.setAccessible(true);
+                    f.setBoolean(appCfg, true);
+                } catch (Throwable ignored) {}
+                appRes.updateConfiguration(appCfg, appRes.getDisplayMetrics());
+                Log.d(TAG, "[Coupang] Phase2 app Resources patched: " + appRes.getConfiguration().locale);
+            }
+
+            // 2b. Patch the ActivityThread's mConfiguration field
+            try {
+                Object activityThread = BlackBoxCore.mainThread();
+                java.lang.reflect.Field mConfigField = activityThread.getClass().getDeclaredField("mConfiguration");
+                mConfigField.setAccessible(true);
+                android.content.res.Configuration threadCfg = (android.content.res.Configuration) mConfigField.get(activityThread);
+                if (threadCfg != null) {
+                    threadCfg.locale = koKR;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        threadCfg.setLocales(new android.os.LocaleList(koKR));
+                    }
+                    Log.d(TAG, "[Coupang] Phase2 ActivityThread.mConfiguration patched");
+                }
+            } catch (Throwable e) {
+                Log.w(TAG, "[Coupang] Phase2 ActivityThread.mConfiguration patch failed: " + e.getMessage());
+            }
+
+            // 2c. Patch the ContextImpl's mOverrideConfiguration if available
+            try {
+                Context baseCtx = app.getBaseContext();
+                java.lang.reflect.Field overrideCfgField = baseCtx.getClass().getDeclaredField("mOverrideConfiguration");
+                overrideCfgField.setAccessible(true);
+                android.content.res.Configuration overrideCfg = (android.content.res.Configuration) overrideCfgField.get(baseCtx);
+                if (overrideCfg == null) {
+                    overrideCfg = new android.content.res.Configuration();
+                }
+                overrideCfg.locale = koKR;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    overrideCfg.setLocales(new android.os.LocaleList(koKR));
+                }
+                overrideCfgField.set(baseCtx, overrideCfg);
+                Log.d(TAG, "[Coupang] Phase2 ContextImpl.mOverrideConfiguration patched");
+            } catch (Throwable ignored) {
+                // Not all implementations have this field
+            }
+
+            Log.d(TAG, "[Coupang] Phase2 complete. Locale.getDefault()=" + java.util.Locale.getDefault()
+                    + ", app.config.locale=" + (appRes != null ? appRes.getConfiguration().locale : "null"));
+        } catch (Throwable e) {
+            Log.e(TAG, "[Coupang] Phase2 locale failed", e);
+        }
+    }
+
+    /**
+     * Phase 3: Pre-populate COUPANG_PREF SharedPreferences with values that bypass
+     * ManageMainStateUseCaseImpl.e() language/region checks.
+     *
+     * Root cause: ManageMainStateUseCaseImpl checks:
+     *   1. homeSection == null → StartLocaleSelection (loops because intro API fails)
+     *   2. !isForceLanguageChanged && !isForceLanguageChangedV2 && !hasSelectedLang → ChangeLanguage → AppRestart
+     *
+     * Fix: Set all bypass flags so the code reaches StartHome path.
+     * Also set region to "KR" so LanguageCheckerProvider returns ko_KR as expected.
+     */
+    private static void injectCoupangPreferences(Application app) {
+        try {
+            // Get the COUPANG_PREF SharedPreferences (MODE_PRIVATE = 0)
+            android.content.SharedPreferences prefs = app.getSharedPreferences("COUPANG_PREF", 0);
+            android.content.SharedPreferences.Editor editor = prefs.edit();
+
+            // Set language bypass flags
+            editor.putBoolean("FORCE_LANGUAGE_CHANGED", true);
+            editor.putBoolean("FORCE_LANGUAGE_CHANGED_V2", true);
+            editor.putBoolean("HAS_SELECTED_LANGUAGE", true);
+            editor.putString("ECOMMERCE_LANGUAGE_KEY", "ko");
+            editor.putBoolean("LANGUAGE_SELECTION_POPUP_SHOWN", true);
+
+            // Set region to KR so LanguageCheckerProvider returns correct device language
+            editor.putString("application_region", "KR");
+
+            boolean success = editor.commit();
+            Log.d(TAG, "[Coupang] SharedPreferences injected: " + (success ? "SUCCESS" : "FAILED"));
+
+            // Verify
+            Log.d(TAG, "[Coupang] FORCE_LANGUAGE_CHANGED=" + prefs.getBoolean("FORCE_LANGUAGE_CHANGED", false));
+            Log.d(TAG, "[Coupang] FORCE_LANGUAGE_CHANGED_V2=" + prefs.getBoolean("FORCE_LANGUAGE_CHANGED_V2", false));
+            Log.d(TAG, "[Coupang] HAS_SELECTED_LANGUAGE=" + prefs.getBoolean("HAS_SELECTED_LANGUAGE", false));
+            Log.d(TAG, "[Coupang] ECOMMERCE_LANGUAGE_KEY=" + prefs.getString("ECOMMERCE_LANGUAGE_KEY", ""));
+            Log.d(TAG, "[Coupang] application_region=" + prefs.getString("application_region", ""));
+        } catch (Throwable e) {
+            Log.e(TAG, "[Coupang] SharedPreferences injection failed", e);
+        }
+    }
+
+    /**
+     * Phase 3b: Block Runtime.exit() and System.exit() to prevent Coupang's restart mechanism.
+     *
+     * Coupang's MainActivity.s0() calls:
+     *   startActivity(intent);  // FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK
+     *   Runtime.getRuntime().exit(0);
+     *
+     * In a virtual environment, exit(0) kills the virtual process, causing a respawn
+     * which triggers the same checks again → infinite loop.
+     *
+     * We install a SecurityManager to intercept checkExit(), preventing the kill.
+     */
+    private static void blockProcessKill() {
+        try {
+            // Install a custom SecurityManager that blocks exit
+            final SecurityManager existing = System.getSecurityManager();
+            System.setSecurityManager(new SecurityManager() {
+                @Override
+                public void checkExit(int status) {
+                    // Walk the call stack to detect Coupang's restart call
+                    StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+                    for (StackTraceElement frame : stack) {
+                        String cls = frame.getClassName();
+                        if (cls.contains("coupang") || cls.contains("MainActivity")) {
+                            Log.e(TAG, "[Coupang] BLOCKED Runtime.exit(" + status + ") from " + cls + "." + frame.getMethodName());
+                            throw new SecurityException("[BlackBox] exit() blocked to prevent restart loop");
+                        }
+                    }
+                    // Allow non-Coupang exits
+                    if (existing != null) {
+                        existing.checkExit(status);
+                    }
+                }
+
+                @Override
+                public void checkPermission(java.security.Permission perm) {
+                    // Allow everything else
+                    if (existing != null) {
+                        try { existing.checkPermission(perm); } catch (SecurityException ignored) {}
+                    }
+                }
+
+                @Override
+                public void checkPermission(java.security.Permission perm, Object context) {
+                    if (existing != null) {
+                        try { existing.checkPermission(perm, context); } catch (SecurityException ignored) {}
+                    }
+                }
+            });
+            Log.d(TAG, "[Coupang] SecurityManager installed to block Runtime.exit()");
+        } catch (Throwable e) {
+            // SecurityManager may not be supported on all Android versions
+            Log.w(TAG, "[Coupang] SecurityManager install failed: " + e.getMessage());
+            // Fallback: try to hook Runtime.exit via reflection
+            blockProcessKillFallback();
+        }
+    }
+
+    /**
+     * Fallback: If SecurityManager fails, use the Runtime shutdown hook approach
+     * to detect and suppress exit.
+     */
+    private static void blockProcessKillFallback() {
+        try {
+            // Add a shutdown hook that logs but can't prevent the exit
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                Log.e(TAG, "[Coupang] SHUTDOWN HOOK: Process being killed!");
+                Log.e(TAG, Log.getStackTraceString(new Throwable("Shutdown stacktrace")));
+            }));
+            Log.d(TAG, "[Coupang] Shutdown hook installed (fallback)");
+        } catch (Throwable e) {
+            Log.w(TAG, "[Coupang] Shutdown hook install failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 4: Hook Device Encrypted (DE) storage access to log and verify redirection.
+     * Patches Context.createDeviceProtectedStorageContext() to log all access.
+     */
+    private static void hookDeviceProtectedStorage(Application app, String packageName) {
+        try {
+            // Log the DE data dir that IOCore should be redirecting
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                Context deContext = app.createDeviceProtectedStorageContext();
+                if (deContext != null) {
+                    File deDataDir = deContext.getDataDir();
+                    File deFilesDir = deContext.getFilesDir();
+                    File deCacheDir = deContext.getCacheDir();
+                    Log.d(TAG, "[Coupang-DE] DeviceProtected dataDir  = " + (deDataDir != null ? deDataDir.getAbsolutePath() : "null"));
+                    Log.d(TAG, "[Coupang-DE] DeviceProtected filesDir = " + (deFilesDir != null ? deFilesDir.getAbsolutePath() : "null"));
+                    Log.d(TAG, "[Coupang-DE] DeviceProtected cacheDir = " + (deCacheDir != null ? deCacheDir.getAbsolutePath() : "null"));
+
+                    // Check if SharedPreferences can be created in DE storage
+                    try {
+                        android.content.SharedPreferences deSp = deContext.getSharedPreferences("coupang_de_test", Context.MODE_PRIVATE);
+                        boolean writeOk = deSp.edit().putBoolean("test_write", true).commit();
+                        Log.d(TAG, "[Coupang-DE] SharedPreferences write test: " + (writeOk ? "SUCCESS" : "FAILED"));
+                        // Clean up test
+                        deSp.edit().clear().commit();
+                    } catch (Throwable e) {
+                        Log.e(TAG, "[Coupang-DE] SharedPreferences write test EXCEPTION: " + e.getMessage());
+                    }
+                } else {
+                    Log.w(TAG, "[Coupang-DE] createDeviceProtectedStorageContext returned null!");
+                }
+            }
+
+            // Also log regular data dir for comparison
+            Log.d(TAG, "[Coupang-DE] Regular dataDir = " + app.getDataDir().getAbsolutePath());
+            Log.d(TAG, "[Coupang-DE] Regular filesDir = " + app.getFilesDir().getAbsolutePath());
+
+        } catch (Throwable e) {
+            Log.e(TAG, "[Coupang-DE] DE storage hook failed", e);
+        }
+    }
+
+    private void handleDeviceSpoofing(AppConfig config) {
+        if (config.spoofProps == null) return;
+        Map<String, String> props = config.spoofProps;
+        Log.d(TAG, "Device spoofing for " + config.packageName + ": " + props);
+        try {
+            Class<?> buildClass = android.os.Build.class;
+            Class<?> buildVersionClass = android.os.Build.VERSION.class;
+
+            for (Map.Entry<String, String> entry : props.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                try {
+                    if ("SDK_INT".equals(key) || "RELEASE".equals(key)) {
+                        Field field = buildVersionClass.getDeclaredField(key);
+                        field.setAccessible(true);
+                        if ("SDK_INT".equals(key)) field.set(null, Integer.parseInt(value));
+                        else field.set(null, value);
+                    } else {
+                        Field field = buildClass.getDeclaredField(key);
+                        field.setAccessible(true);
+                        field.set(null, value);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to spoof " + key, e);
+                }
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
         }
     }
 

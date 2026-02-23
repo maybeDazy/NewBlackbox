@@ -7,15 +7,12 @@ import android.content.pm.ServiceInfo;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
-import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
 
 import java.lang.reflect.Proxy;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import black.android.app.ActivityThreadActivityClientRecordContext;
@@ -45,16 +42,6 @@ public class HCallbackProxy implements IInjectHook, Handler.Callback {
     public static final String TAG = "HCallbackStub";
     private Handler.Callback mOtherCallback;
     private AtomicBoolean mBeing = new AtomicBoolean(false);
-
-    private static final long PROCESS_RESTART_WINDOW_MS = 15_000L;
-    private static final int MAX_PROCESS_RESTARTS_IN_WINDOW = 2;
-    private static final Map<String, RestartWindow> sRestartWindows = new HashMap<>();
-
-    private static final class RestartWindow {
-        long startMs;
-        int count;
-    }
-
 
     private Handler.Callback getHCallback() {
         return BRHandler.get(getH()).mCallback();
@@ -159,20 +146,9 @@ public class HCallbackProxy implements IInjectHook, Handler.Callback {
         ActivityInfo activityInfo = stubRecord.mActivityInfo;
         if (activityInfo != null) {
             if (BActivityThread.getAppConfig() == null) {
-                String restartKey = activityInfo.packageName + ":" + activityInfo.processName + ":" + stubRecord.mUserId;
-                if (!allowProcessRestart(restartKey)) {
-                    Slog.e(TAG, "Skip restartProcess due to restart loop guard: " + restartKey);
-                    return false;
-                }
-
                 BlackBoxCore.getBActivityManager().restartProcess(activityInfo.packageName, activityInfo.processName, stubRecord.mUserId);
 
                 Intent launchIntentForPackage = BlackBoxCore.getBPackageManager().getLaunchIntentForPackage(activityInfo.packageName, stubRecord.mUserId);
-                if (launchIntentForPackage == null) {
-                    Slog.e(TAG, "restartProcess succeeded but launcher intent is null for " + activityInfo.packageName);
-                    return false;
-                }
-
                 intent.setExtrasClassLoader(this.getClass().getClassLoader());
                 ProxyActivityRecord.saveStub(intent, launchIntentForPackage, stubRecord.mActivityInfo, stubRecord.mActivityRecord, stubRecord.mUserId);
                 if (BuildCompat.isPie()) {
@@ -219,28 +195,6 @@ public class HCallbackProxy implements IInjectHook, Handler.Callback {
             }
         }
         return false;
-    }
-
-
-    private static synchronized boolean allowProcessRestart(String key) {
-        long now = SystemClock.elapsedRealtime();
-        RestartWindow restartWindow = sRestartWindows.get(key);
-        if (restartWindow == null) {
-            restartWindow = new RestartWindow();
-            restartWindow.startMs = now;
-            restartWindow.count = 1;
-            sRestartWindows.put(key, restartWindow);
-            return true;
-        }
-
-        if (now - restartWindow.startMs > PROCESS_RESTART_WINDOW_MS) {
-            restartWindow.startMs = now;
-            restartWindow.count = 1;
-            return true;
-        }
-
-        restartWindow.count++;
-        return restartWindow.count <= MAX_PROCESS_RESTARTS_IN_WINDOW;
     }
 
     private boolean handleCreateService(Object data) {

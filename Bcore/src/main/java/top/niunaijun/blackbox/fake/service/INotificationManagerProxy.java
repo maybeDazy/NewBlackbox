@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationChannelGroup;
 import android.content.Context;
 import android.os.Build;
+import android.os.Bundle;
 
 import androidx.annotation.RequiresApi;
 
@@ -105,6 +106,23 @@ public class INotificationManagerProxy extends BinderInvocationStub {
             String tag = (String) args[getTagIndex()];
             int id = (int) args[getIdIndex()];
             Notification notification = MethodParameterUtils.getFirstParam(args, Notification.class);
+            
+            // Customize Notification with Container Name
+            if (notification != null && BActivityThread.getAppConfig() != null && BActivityThread.getAppConfig().spoofProps != null) {
+                String containerName = BActivityThread.getAppConfig().spoofProps.get("CONTAINER_NAME");
+                if (containerName != null && !containerName.isEmpty()) {
+                    Bundle extras = notification.extras;
+                    if (extras != null) {
+                        CharSequence title = extras.getCharSequence(Notification.EXTRA_TITLE);
+                        if (title != null) {
+                            extras.putCharSequence(Notification.EXTRA_TITLE, containerName + " - " + title);
+                        } else {
+                            extras.putCharSequence(Notification.EXTRA_TITLE, containerName);
+                        }
+                    }
+                }
+            }
+            
             BNotificationManager.get().enqueueNotificationWithTag(id, tag, notification);
             return 0;
         }

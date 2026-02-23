@@ -8,6 +8,8 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
+
+import top.niunaijun.blackbox.core.env.IOPathRedirector;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -128,6 +130,18 @@ public class BlackBoxCore extends ClientConfiguration {
     private int mCurrentAppUid = -1;
     private String mCurrentAppPackage = null;
     private boolean mIsSandboxedEnvironment = false;
+
+    // ★ IO Path Redirection injection point
+    private static IOPathRedirector sPathRedirector;
+
+    public static void setPathRedirector(IOPathRedirector redirector) {
+        sPathRedirector = redirector;
+    }
+
+    public static IOPathRedirector getPathRedirector() {
+        return sPathRedirector;
+    }
+    // ★ End IO Path Redirection
 
     public static BlackBoxCore get() {
         return sBlackBoxCore;
@@ -1275,6 +1289,11 @@ public class BlackBoxCore extends ClientConfiguration {
     @Override
     public boolean requestInstallPackage(File file, int userId) {
         return mClientConfiguration.requestInstallPackage(file, userId);
+    }
+
+    @Override
+    public java.util.Map<String, String> getSpoofProfile(int userId) {
+        return mClientConfiguration.getSpoofProfile(userId);
     }
 
     private void startLogcat() {

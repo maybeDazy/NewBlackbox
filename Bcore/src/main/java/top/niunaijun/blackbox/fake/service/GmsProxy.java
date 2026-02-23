@@ -15,8 +15,6 @@ import top.niunaijun.blackbox.utils.Slog;
 
 public class GmsProxy extends BinderInvocationStub {
     public static final String TAG = "GmsProxy";
-    private static final long MISSING_BINDER_LOG_WINDOW_MS = 10_000L;
-    private static long sLastMissingBinderLogAt;
 
     public GmsProxy() {
         super(BRServiceManager.get().getService("gms"));
@@ -26,11 +24,7 @@ public class GmsProxy extends BinderInvocationStub {
     protected Object getWho() {
         IBinder binder = BRServiceManager.get().getService("gms");
         if (binder == null) {
-            long now = System.currentTimeMillis();
-            if (now - sLastMissingBinderLogAt > MISSING_BINDER_LOG_WINDOW_MS) {
-                sLastMissingBinderLogAt = now;
-                Slog.d(TAG, "gms service binder unavailable, skip proxy binding");
-            }
+            Slog.e(TAG, "Failed to get gms service binder");
             return null;
         }
         try {
