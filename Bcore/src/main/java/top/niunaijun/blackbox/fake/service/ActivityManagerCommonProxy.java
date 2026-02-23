@@ -7,6 +7,7 @@ import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.SystemClock;
 
 import java.io.File;
 import java.lang.reflect.Method;
@@ -27,6 +28,12 @@ import static android.content.pm.PackageManager.GET_META_DATA;
 
 public class ActivityManagerCommonProxy {
     public static final String TAG = "CommonStub";
+    private static final String ACTION_REQUEST_PERMISSIONS = "android.content.pm.action.REQUEST_PERMISSIONS";
+    private static long sLastPermissionRequestUptime;
+    private static String sLastPermissionRequestKey;
+    private static long sLastProxyLaunchUptime;
+    private static String sLastProxyLaunchKey;
+
 
     @ProxyMethod("startActivity")
     public static class StartActivity extends MethodHook {
@@ -38,9 +45,23 @@ public class ActivityManagerCommonProxy {
             assert intent != null;
             
             
+            if (isRapidDuplicateProxyLaunch(intent)) {
+                Slog.w(TAG, "Dropped rapid duplicate proxy launch: " + intent);
+                return 0;
+            }
+
             if (intent.getParcelableExtra("_B_|_target_") != null) {
                 return method.invoke(who, args);
             }
+
+            if (isPermissionRequestIntent(intent)) {
+                if (shouldThrottlePermissionRequest(intent)) {
+                    Slog.w(TAG, "Throttled duplicated permission request intent: " + intent);
+                    return 0;
+                }
+                return method.invoke(who, args);
+            }
+
             if (ComponentUtils.isRequestInstall(intent)) {
                 File file = FileProviderHandler.convertFile(BActivityThread.getApplication(), intent.getData());
                 
@@ -217,4 +238,57 @@ public class ActivityManagerCommonProxy {
             return BlackBoxCore.getBActivityManager().getCallingActivity((IBinder) args[0], BActivityThread.getUserId());
         }
     }
+
+    private static boolean isRapidDuplicateProxyLaunch(Intent intent) {
+        if (intent == null) return false;
+        ComponentName component = intent.getComponent();
+        if (component == null) return false;
+
+        String cls = component.getClassName();
+        if (cls == null || !cls.contains("top.niunaijun.blackbox.proxy.ProxyActivity$P")) {
+            return false;
+        }
+
+        Intent target = intent.getParcelableExtra("_B_|_target_");
+        String targetCmp = target != null && target.getComponent() != null
+                ? target.getComponent().flattenToShortString() : "null";
+        String key = BActivityThread.getAppPackageName() + "@" + BActivityThread.getUserId() + "@" + cls + "@" + targetCmp;
+
+        long now = SystemClock.elapsedRealtime();
+        synchronized (ActivityManagerCommonProxy.class) {
+            boolean duplicated = key.equals(sLastProxyLaunchKey) && (now - sLastProxyLaunchUptime) < 800;
+            sLastProxyLaunchKey = key;
+            sLastProxyLaunchUptime = now;
+            return duplicated;
+        }
+    }
+
+    private static boolean isPermissionRequestIntent(Intent intent) {
+        if (intent == null) return false;
+
+        if (ACTION_REQUEST_PERMISSIONS.equals(intent.getAction())) {
+            return true;
+        }
+
+        String pkg = intent.getPackage();
+        if (pkg != null && pkg.contains("permissioncontroller")) {
+            return true;
+        }
+
+        ComponentName component = intent.getComponent();
+        return component != null && component.getPackageName() != null
+                && component.getPackageName().contains("permissioncontroller");
+    }
+
+    private static boolean shouldThrottlePermissionRequest(Intent intent) {
+        String key = BActivityThread.getAppPackageName() + "@" + BActivityThread.getUserId();
+        long now = SystemClock.elapsedRealtime();
+        synchronized (ActivityManagerCommonProxy.class) {
+            boolean duplicated = key.equals(sLastPermissionRequestKey) && (now - sLastPermissionRequestUptime) < 1200;
+            sLastPermissionRequestKey = key;
+            sLastPermissionRequestUptime = now;
+            return duplicated;
+        }
+    }
+
 }
