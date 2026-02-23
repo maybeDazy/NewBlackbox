@@ -430,7 +430,7 @@ public class ActivityStack {
                                           IBinder callerToken, IBinder resultToken, String resultWho, int requestCode, int flags,
                                           Bundle options,
                                           int userId, ActivityRecord sourceRecord, ActivityInfo activityInfo, int launchMode) {
-        ActivityRecord selfRecord = newActivityRecord(intent, activityInfo, resultTo, userId);
+        ActivityRecord selfRecord = newActivityRecord(intent, activityInfo, null, userId);
         ProxyActivityRecord stubRecord = new ProxyActivityRecord(userId, activityInfo, intent, selfRecord);
         Intent shadow = startActivityProcess(userId, intent, activityInfo, selfRecord);
         if (!allowStubLaunch(shadow, stubRecord)) {
