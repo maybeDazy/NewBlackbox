@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import android.util.Log
 import top.niunaijun.blackbox.BlackBoxCore
+import top.niunaijun.blackboxa.container.ContainerInitializer
 
 
 class App : Application() {
@@ -66,6 +67,7 @@ class App : Application() {
         try {
             super.onCreate()
             AppManager.doOnCreate(mContext)
+            ContainerInitializer.warmUp(mContext)
         } catch (e: Exception) {
             Log.e("App", "Error in onCreate: ${e.message}")
         }
