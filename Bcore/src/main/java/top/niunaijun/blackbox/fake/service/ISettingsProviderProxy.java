@@ -12,6 +12,7 @@ import top.niunaijun.blackbox.fake.hook.ClassInvocationStub;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
 import top.niunaijun.blackbox.utils.Slog;
+import top.niunaijun.blackbox.utils.CloneProfileConfig;
 
 
 public class ISettingsProviderProxy extends ClassInvocationStub {
@@ -47,6 +48,12 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                         Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
                         return "true"; 
                     }
+                    if (Settings.Secure.ANDROID_ID.equalsIgnoreCase(key)) {
+                        String spoofed = CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
+                        if (spoofed != null) {
+                            return spoofed;
+                        }
+                    }
                 }
                 
                 
@@ -73,6 +80,12 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                     if (key != null && key.contains("feature_flag")) {
                         Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
                         return "true"; 
+                    }
+                    if (Settings.Secure.ANDROID_ID.equalsIgnoreCase(key)) {
+                        String spoofed = CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
+                        if (spoofed != null) {
+                            return spoofed;
+                        }
                     }
                 }
                 

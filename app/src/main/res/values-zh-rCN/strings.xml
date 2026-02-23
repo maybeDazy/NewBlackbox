@@ -63,4 +63,9 @@
     <string name="disable_gms">关闭服务</string>
     <string name="disable_gms_hint">是否清除当前Google服务环境？Google服务数据将被清空。</string>
     <string name="no_gms">当前手机没有Google服务环境。</string>
+    <string name="app_edit_profile">Edit Clone Profile</string>
+    <string name="app_edit_profile_name">Display Name</string>
+    <string name="app_edit_profile_process">Process Name</string>
+    <string name="app_edit_profile_android_id">Android ID</string>
+    <string name="app_edit_profile_model">Model (e.g. SM-T970N)</string>
 </resources>
