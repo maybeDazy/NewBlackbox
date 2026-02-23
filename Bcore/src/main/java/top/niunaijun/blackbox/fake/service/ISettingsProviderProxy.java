@@ -54,7 +54,6 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                     }
                 }
                 
-                
                 return method.invoke(who, args);
             } catch (Exception e) {
                 String errorMsg = e.getMessage();
@@ -84,7 +83,6 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                         return spoofed;
                     }
                 }
-                
                 
                 return method.invoke(who, args);
             } catch (Exception e) {

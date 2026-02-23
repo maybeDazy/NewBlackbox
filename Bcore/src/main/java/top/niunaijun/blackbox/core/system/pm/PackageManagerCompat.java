@@ -195,7 +195,7 @@ public class PackageManagerCompat {
         } catch (PackageManager.NameNotFoundException ignored) {
         }
         if ((flags & PackageManager.GET_SIGNATURES) != 0) {
-            if (base == null) {
+            if (base == null || "com.coupang.mobile".equals(p.packageName)) {
                 pi.signatures = p.mSignatures;
             } else {
                 pi.signatures = base.signatures;
@@ -203,7 +203,7 @@ public class PackageManagerCompat {
         }
         if (BuildCompat.isPie()) {
             if ((flags & PackageManager.GET_SIGNING_CERTIFICATES) != 0) {
-                if (base == null) {
+                if (base == null || "com.coupang.mobile".equals(p.packageName)) {
                     PackageParser.SigningDetails signingDetails = PackageParser.SigningDetails.UNKNOWN;
                     BRPackageParserSigningDetails.get(signingDetails)._set_signatures(p.mSigningDetails.signatures);
                     pi.signingInfo = BRSigningInfo.get()._new(signingDetails);
