@@ -3,7 +3,11 @@ package top.niunaijun.blackbox.proxy;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.util.Log;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import androidx.annotation.Nullable;
 
@@ -18,6 +22,14 @@ import top.niunaijun.blackbox.utils.Slog;
 
 public class ProxyActivity extends Activity {
     public static final String TAG = "ProxyActivity";
+    private static final long RELAUNCH_WINDOW_MS = 15_000L;
+    private static final int MAX_RELAUNCH_COUNT = 3;
+    private static final Map<String, RelaunchGuard> sRelaunchGuards = new HashMap<>();
+
+    private static final class RelaunchGuard {
+        long windowStartMs;
+        int count;
+    }
 
     
     @Override
@@ -32,10 +44,58 @@ public class ProxyActivity extends Activity {
         ProxyActivityRecord record = ProxyActivityRecord.create(getIntent());
         if (record.mTarget != null) {
             record.mTarget.setExtrasClassLoader(BlackBoxCore.getApplication().getClassLoader());
+
+            String guardKey = resolveGuardKey(record);
+            if (!allowRelaunch(guardKey)) {
+                Slog.w(TAG, "Skip target relaunch due to guard: " + guardKey);
+                return;
+            }
+
             startActivity(record.mTarget);
             return;
         }
     }
+
+    private static String resolveGuardKey(ProxyActivityRecord record) {
+        if (record == null) {
+            return "unknown";
+        }
+        if (record.mActivityInfo != null) {
+            return record.mActivityInfo.packageName + "/" + record.mActivityInfo.name;
+        }
+        if (record.mTarget == null) {
+            return "unknown";
+        }
+        if (record.mTarget.getComponent() != null) {
+            return record.mTarget.getComponent().flattenToShortString();
+        }
+        if (record.mTarget.getPackage() != null) {
+            return record.mTarget.getPackage();
+        }
+        return record.mTarget.getAction() != null ? record.mTarget.getAction() : "unknown";
+    }
+
+    private static synchronized boolean allowRelaunch(String key) {
+        long now = SystemClock.elapsedRealtime();
+        RelaunchGuard guard = sRelaunchGuards.get(key);
+        if (guard == null) {
+            guard = new RelaunchGuard();
+            guard.windowStartMs = now;
+            guard.count = 1;
+            sRelaunchGuards.put(key, guard);
+            return true;
+        }
+
+        if (now - guard.windowStartMs > RELAUNCH_WINDOW_MS) {
+            guard.windowStartMs = now;
+            guard.count = 1;
+            return true;
+        }
+
+        guard.count++;
+        return guard.count <= MAX_RELAUNCH_COUNT;
+    }
+
 
     public static class P0 extends ProxyActivity {
 

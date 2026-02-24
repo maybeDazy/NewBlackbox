@@ -11,6 +11,168 @@
 8. [Advanced Features](#advanced-features)
 9. [API Reference](#api-reference)
 10. [Frequently Asked Questions](#frequently-asked-questions)
+11. [Android Container Clone Blueprint (Korean)](#android-container-clone-blueprint-korean)
+
+---
+
+## Android Container Clone Blueprint (Korean)
+
+> 아래 설계는 `ALEX5402/NewBlackbox` 기반 포팅을 전제로 한 **아키텍처 가이드**입니다. 실제 배포 시에는 각 앱의 약관, 개인정보보호법, 통신 관련 법규, 구글 플레이 정책을 반드시 준수하세요.
+
+### 1) 목표 범위
+
+- 최신 안드로이드(기준: Android 14/15 대응 코드 경로 유지)까지 가상 컨테이너 구동
+- 호스트(실기기)에 설치된 앱 목록을 읽어, 선택한 앱별로 독립 컨테이너 생성
+- 동일 앱 다중 인스턴스(예: `com.shop.app` x N 컨테이너) 지원
+- WebView, 딥링크(Intent Filter), 파일 선택, 알림, 백그라운드 작업 호환
+- 컨테이너별 디바이스 프로필(예: Android ID, 모델명 등) 오버라이드
+
+### 2) Android Studio / SDK 권장 스펙
+
+- **Android Studio**: Iguana 이상(Gradle 8.x + AGP 최신 안정 버전)
+- **JDK**: 17
+- **compileSdk**: 35 권장
+- **targetSdk**: 34 이상(점진적 35 검증)
+- **minSdk**: 26 권장
+  - 이유: WebView/Scoped Storage/백그라운드 제약 대응 비용 대비 안정성
+  - 레거시 확장이 필요하면 24까지 가능하나, 테스트 매트릭스 급증
+
+### 3) 포팅 전략 (NewBlackbox 기반)
+
+#### Phase A. 코어 포팅
+1. `Bcore` 가상화/후킹 계층을 우선 유지
+2. 앱 셸(`app`)은 UI/브랜딩만 교체(디자인 차별화)
+3. Android 14+에서 막히는 PendingIntent, receiver export, foreground service 타입 점검
+
+#### Phase B. 컨테이너 매니저 도입
+1. `ContainerRegistry`(SQLite)로 컨테이너 메타 관리
+2. `PackageCloneService`로 앱 import/install 파이프라인 통합
+3. `ProfileSpoofService`로 컨테이너별 프로필 바인딩
+
+#### Phase C. 안정화
+1. WebView/딥링크 회귀 테스트
+2. DB/파일 경로 권한 예외 전수 점검
+3. e커머스 앱 중심 실사용 시나리오 테스트
+
+### 4) 데이터 구조 (요청한 경로 반영)
+
+요구사항 기준 루트:
+
+`/data/user/0/daize.pro.container/databases/`
+
+권장 레이아웃:
+
+```text
+/data/user/0/daize.pro.container/
+  databases/
+    container_registry.db
+    containers/
+      <container_uuid_1>/
+        config.json
+        virtual_data/
+        virtual_de/<user>/
+        webview/
+      <container_uuid_2>/
+        ...
+```
+
+- 컨테이너 ID는 `UUIDv4` 또는 `ULID` 권장
+- 같은 패키지도 컨테이너 ID가 다르면 완전히 분리
+- 매핑 테이블 예시:
+  - `containers(container_id, package_name, display_name, created_at, state)`
+  - `profiles(container_id, android_id, model, brand, device, phone_number_masked, ... )`
+  - `launch_stats(container_id, last_launch_at, crash_count)`
+
+### 5) 컨테이너 실행 플로우
+
+1. 호스트 설치 앱 스캔 (`PackageManager`)
+2. 사용자가 앱 선택
+3. 컨테이너 UUID 발급 + registry 기록
+4. 선택 앱을 가상 사용자/가상 UID 공간에 설치
+5. 데이터 루트를 컨테이너 경로로 바인딩
+6. 실행 시 후킹 계층에서 `container_id` 기준 프로필 주입
+
+### 6) WebView / 딥링크 필수 체크
+
+- WebView 데이터 디렉토리 suffix를 컨테이너 단위로 분리
+- CookieManager, cache, service worker 저장소 충돌 방지
+- 딥링크는 host ↔ virtual intent 브리지 설계
+- 브라우저/쇼핑앱 결제 콜백 URL 스킴 회귀 테스트 필수
+
+### 7) 스푸핑/후킹 설계 가이드 (안전 범위)
+
+- 컨테이너별 프로필 값을 런타임에 주입
+- `ANDROID_ID`, `Build.MODEL`, `Build.DEVICE`, `Build.MANUFACTURER`, `Build.VERSION.RELEASE` 등은 일관성 있게 세트 구성
+- 전화번호/IMEI류는 앱·국가·정책·권한 상태에 따라 수집/노출 제한이 강하므로 **권한 및 법적 검토 선행**
+- 값 변경 시 즉시 반영보다 "다음 실행부터 적용" 전략이 충돌이 적음
+
+### 8) `Cannot create directory` / `SQLiteCantOpenDatabaseException` 예방
+
+#### 디렉토리 생성 원칙
+- DB 오픈 전에 부모 디렉토리 생성 + writable 검증
+- 프로세스 동시 생성 경합을 막기 위해 파일 락 사용
+- 경로 상수화(하드코딩 분산 금지) + 마이그레이션 유틸 제공
+
+#### SQLite 안정화 원칙
+- 앱 시작 초기에 registry DB를 선오픈(warm-up)
+- WAL 모드 + busy timeout
+- 스키마 버전 관리(DDL 변경 시 migration step 강제)
+
+예시 체크 순서:
+
+```kotlin
+val root = File(context.filesDir.parentFile, "databases/containers/$containerId")
+if (!root.exists() && !root.mkdirs()) {
+    throw IOException("Cannot create directory: ${root.absolutePath}")
+}
+if (!root.canWrite()) {
+    throw IOException("Directory not writable: ${root.absolutePath}")
+}
+```
+
+### 9) SELinux / All Files Access 고려
+
+- 일반 앱은 SELinux enforcing 환경에서 시스템 영역 우회 불가
+- 따라서 가상화는 반드시 **앱 샌드박스 내부 경로 중심**으로 설계
+- `MANAGE_EXTERNAL_STORAGE`(All Files Access)는 심사/정책 리스크가 매우 큼
+- 가능하면 SAF(Storage Access Framework) + 앱 내부 저장소 우선
+- 외부 저장소 접근이 필수일 때만 최소 범위 권한 요청
+
+### 10) 모듈 구조 제안
+
+- `app` : 런처/UI, 컨테이너 목록/생성/삭제 화면
+- `Bcore` : 프로세스 가상화, 후킹, 패키지/UID 추상화
+- `container-manager`(신규 권장) :
+  - `ContainerRegistryDao`
+  - `ContainerFilesystem`
+  - `ContainerInstaller`
+  - `ContainerLaunchOrchestrator`
+- `profile-engine`(신규 권장) : 컨테이너별 프로필/규칙/적용 시점 관리
+
+### 11) 화면(UX) 구성 초안
+
+1. **홈**: 컨테이너 카드 리스트(앱 아이콘 + 컨테이너 ID + 상태)
+2. **앱 추가**: 호스트 설치앱 검색/필터 후 다중 선택 생성
+3. **컨테이너 상세**: 프로필 편집(Android ID, 기기명 등), 데이터 초기화, 복제
+4. **로그/진단**: 최근 충돌, 권한 누락, WebView/딥링크 상태
+
+### 12) 테스트 매트릭스 (e커머스 앱 중심)
+
+- OS: Android 10 / 12 / 13 / 14 / 15 preview
+- ABI: arm64-v8a 우선, armeabi-v7a 보조
+- 시나리오:
+  - 동일 앱 컨테이너 1개/3개/5개 동시 로그인
+  - 딥링크 진입, 결제 리다이렉트, WebView 로그인 유지
+  - 백그라운드 복귀/프로세스 kill 후 재실행
+  - 컨테이너별 알림 토큰 분리 확인
+
+### 13) 구현 우선순위 (현실적인 로드맵)
+
+1. 컨테이너 생성/삭제 + 앱 import/install 안정화
+2. 데이터 경로 분리 100% 보장
+3. WebView/딥링크 호환성
+4. 프로필 엔진(스푸핑 설정 UI + 적용)
+5. 성능 최적화(콜드 스타트, 메모리)
 
 ---
 
