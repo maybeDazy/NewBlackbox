@@ -219,6 +219,9 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
             packageName = extractCallingPackage(args);
         }
         if (packageName == null || packageName.trim().isEmpty()) {
+            packageName = BlackBoxCore.get().getCurrentAppPackage();
+        }
+        if (packageName == null || packageName.trim().isEmpty()) {
             packageName = BlackBoxCore.getHostPkg();
         }
         int userId = BActivityThread.getUserId();
