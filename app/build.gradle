@@ -5,7 +5,7 @@ plugins {
 
 android {
 
-    namespace 'top.niunaijun.blackboxa'
+    namespace 'daize.pro.cloner'
     compileSdk rootProject.ext.compileSdkVersion
     ndkVersion = "29.0.13846066"
     defaultConfig {
