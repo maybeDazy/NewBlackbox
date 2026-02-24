@@ -27,7 +27,12 @@ public class AppSystemEnv {
         sSystemPackages.add("com.android.talkback");
         sSystemPackages.add("com.miui.gallery");
 
-        
+        // Google Play Services visibility
+        sSystemPackages.add("com.google.android.gms");
+        sSystemPackages.add("com.google.android.gsf");
+        sSystemPackages.add("com.android.vending");
+        sSystemPackages.add("com.google.android.play.games");
+
         sSystemPackages.add("com.google.android.inputmethod.latin");
         
 
