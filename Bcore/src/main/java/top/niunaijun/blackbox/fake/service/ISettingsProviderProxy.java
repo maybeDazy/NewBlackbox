@@ -12,6 +12,7 @@ import top.niunaijun.blackbox.fake.hook.ClassInvocationStub;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
 import top.niunaijun.blackbox.utils.Slog;
+import top.niunaijun.blackbox.utils.CloneProfileConfig;
 
 
 public class ISettingsProviderProxy extends ClassInvocationStub {
@@ -41,12 +42,13 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             try {
                 
-                if (args != null && args.length > 0) {
-                    String key = (String) args[0];
-                    if (key != null && key.contains("feature_flag")) {
-                        Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
-                        return "true"; 
-                    }
+                String key = extractSettingKey(args);
+                if (key != null && key.contains("feature_flag")) {
+                    Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
+                    return "true";
+                }
+                if (isAndroidIdRequest(key)) {
+                    return resolveCloneAndroidId(args);
                 }
                 
                 
@@ -68,12 +70,13 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             try {
                 
-                if (args != null && args.length > 0) {
-                    String key = (String) args[0];
-                    if (key != null && key.contains("feature_flag")) {
-                        Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
-                        return "true"; 
-                    }
+                String key = extractSettingKey(args);
+                if (key != null && key.contains("feature_flag")) {
+                    Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
+                    return "true";
+                }
+                if (isAndroidIdRequest(key)) {
+                    return resolveCloneAndroidId(args);
                 }
                 
                 
@@ -190,4 +193,74 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
             }
         }
     }
+    private static boolean isAndroidIdRequest(String key) {
+        if (key == null) return false;
+        String lower = key.toLowerCase();
+        return Settings.Secure.ANDROID_ID.equalsIgnoreCase(lower) || lower.contains("android_id") || lower.contains("ssaid");
+    }
+
+    private static String extractSettingKey(Object[] args) {
+        if (args == null || args.length == 0) {
+            return null;
+        }
+        for (Object arg : args) {
+            if (arg instanceof String) {
+                String key = (String) arg;
+                String lower = key.toLowerCase();
+                if (lower.contains("android_id") || lower.contains("ssaid") || lower.contains("feature_flag") || Settings.Secure.ANDROID_ID.equalsIgnoreCase(key)) {
+                    return key;
+                }
+            }
+        }
+        return args[0] instanceof String ? (String) args[0] : null;
+    }
+
+    private static String resolveCloneAndroidId(Object[] args) {
+        String packageName = extractCallingPackage(args);
+        if (packageName == null || packageName.trim().isEmpty()) {
+            packageName = BActivityThread.getAppPackageName();
+        }
+        int userId = extractUserId(args);
+        if (userId < 0) {
+            userId = BActivityThread.getUserId();
+        }
+        return CloneProfileConfig.getAndroidId(packageName, userId);
+    }
+
+    private static String extractCallingPackage(Object[] args) {
+        if (args == null) return null;
+        for (Object arg : args) {
+            if (arg instanceof String) {
+                String value = (String) arg;
+                if (isLikelyPackageName(value)) {
+                    return value;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int extractUserId(Object[] args) {
+        if (args == null) return -1;
+        for (Object arg : args) {
+            if (arg instanceof Integer) {
+                int value = (Integer) arg;
+                if (value >= 0 && value <= 99999) {
+                    return value;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isLikelyPackageName(String value) {
+        if (value == null) return false;
+        if (!value.contains(".")) return false;
+        String lower = value.toLowerCase();
+        if (lower.contains("android_id") || lower.contains("ssaid") || lower.contains("feature_flag")) {
+            return false;
+        }
+        return true;
+    }
+
 }
