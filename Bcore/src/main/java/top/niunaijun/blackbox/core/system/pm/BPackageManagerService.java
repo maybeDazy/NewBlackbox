@@ -92,7 +92,9 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
         if (!sUserManager.exists(userId)) return null;
         if (Objects.equals(packageName, BlackBoxCore.getHostPkg())) {
             try {
-                return BlackBoxCore.getPackageManager().getApplicationInfo(packageName, flags);
+                // Use host context's package manager directly to avoid potential recursion
+                // in sandboxed processes where BlackBoxCore.getPackageManager() might be hooked.
+                return BlackBoxCore.getContext().getPackageManager().getApplicationInfo(packageName, flags);
             } catch (PackageManager.NameNotFoundException e) {
                 e.printStackTrace();
             }
@@ -267,7 +269,8 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
         if (!sUserManager.exists(userId)) return null;
         if (Objects.equals(packageName, BlackBoxCore.getHostPkg())) {
             try {
-                return BlackBoxCore.getPackageManager().getPackageInfo(packageName, flags);
+                // Use host context's package manager directly to avoid potential recursion
+                return BlackBoxCore.getContext().getPackageManager().getPackageInfo(packageName, flags);
             } catch (PackageManager.NameNotFoundException e) {
                 e.printStackTrace();
             }
@@ -663,7 +666,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
 
 
 
-            PackageInfo packageArchiveInfo = BlackBoxCore.getPackageManager().getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);
+            PackageInfo packageArchiveInfo = BlackBoxCore.getContext().getPackageManager().getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);
             if (packageArchiveInfo == null) {
                 return result.installError("getPackageArchiveInfo error.Please check whether APK is normal.");
             }
@@ -684,7 +687,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
 
             boolean support = AbiUtils.isSupport(apkFile);
             if (!support) {
-                String msg = packageArchiveInfo.applicationInfo.loadLabel(BlackBoxCore.getPackageManager()) + "[" + packageArchiveInfo.packageName + "]";
+                String msg = packageArchiveInfo.applicationInfo.loadLabel(BlackBoxCore.getContext().getPackageManager()) + "[" + packageArchiveInfo.packageName + "]";
                 return result.installError(packageArchiveInfo.packageName,
                         msg + "\n" + (BlackBoxCore.is64Bit() ? "The box does not support 32-bit Application" : "The box does not support 64-bit Application"));
             }
@@ -695,7 +698,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             result.packageName = aPackage.packageName;
 
             if (option.isFlag(InstallOption.FLAG_SYSTEM)) {
-                aPackage.applicationInfo = BlackBoxCore.getPackageManager().getPackageInfo(aPackage.packageName, 0).applicationInfo;
+                aPackage.applicationInfo = BlackBoxCore.getContext().getPackageManager().getPackageInfo(aPackage.packageName, 0).applicationInfo;
             }
             BPackageSettings bPackageSettings = mSettings.getPackageLPw(aPackage.packageName, aPackage, option);
 

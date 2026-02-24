@@ -140,7 +140,11 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             
             PackageInfo packageInfo = BlackBoxCore.getBPackageManager().getPackageInfo(packageName, flags, BlackBoxCore.getUserId());
             if (packageInfo != null) {
-                
+                // Spoof Coupang to appear debuggable to bypass tamper checks
+                if ("com.coupang.mobile".equals(packageName) && packageInfo.applicationInfo != null) {
+                    packageInfo.applicationInfo.flags |= 2; // FLAG_DEBUGGABLE
+                }
+
                 if (packageInfo.requestedPermissions != null && packageInfo.requestedPermissionsFlags != null) {
                     for (int i = 0; i < packageInfo.requestedPermissions.length; i++) {
                         String perm = packageInfo.requestedPermissions[i];

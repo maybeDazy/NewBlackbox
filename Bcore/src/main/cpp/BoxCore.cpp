@@ -28,16 +28,28 @@ struct {
 } VMEnv;
 
 
+
+#include <thread>
+#include <mutex>
+
+// TLS로 JNIEnv 캐싱 (성능 개선)
+static thread_local JNIEnv* tls_env = nullptr;
+
 JNIEnv *getEnv() {
-    JNIEnv *env;
-    VMEnv.vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6);
-    return env;
+    if (tls_env) return tls_env;
+    JNIEnv *env = nullptr;
+    if (VMEnv.vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) == JNI_OK) {
+        tls_env = env;
+        return env;
+    }
+    return nullptr;
 }
 
 JNIEnv *ensureEnvCreated() {
     JNIEnv *env = getEnv();
-    if (env == NULL) {
-        VMEnv.vm->AttachCurrentThread(&env, NULL);
+    if (env == nullptr) {
+        VMEnv.vm->AttachCurrentThread(&env, nullptr);
+        tls_env = env;
     }
     return env;
 }
