@@ -28,6 +28,7 @@ import top.niunaijun.blackbox.core.system.user.BUserHandle;
 import top.niunaijun.blackbox.entity.AppConfig;
 import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.utils.FileUtils;
+import top.niunaijun.blackbox.utils.CloneProfileConfig;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.ApplicationThreadCompat;
 import top.niunaijun.blackbox.utils.compat.BundleCompat;
@@ -50,6 +51,7 @@ public class BProcessManagerService implements ISystemService {
         ApplicationInfo info = BPackageManagerService.get().getApplicationInfo(packageName, 0, userId);
         if (info == null)
             return null;
+        String effectiveProcessName = CloneProfileConfig.getProcessName(packageName, userId, processName);
         ProcessRecord app;
         int buid = BUserHandle.getUid(userId, BPackageManagerService.get().getAppId(packageName));
         synchronized (mProcessLock) {
@@ -59,7 +61,7 @@ public class BProcessManagerService implements ISystemService {
                 bProcess = new HashMap<>();
             }
             if (bpid == -1) {
-                app = bProcess.get(processName);
+                app = bProcess.get(effectiveProcessName);
                 if (app != null) {
                     if (app.initLock != null) {
                         app.initLock.block();
@@ -74,14 +76,14 @@ public class BProcessManagerService implements ISystemService {
             if (bpid == -1) {
                 throw new RuntimeException("No processes available");
             }
-            app = new ProcessRecord(info, processName);
+            app = new ProcessRecord(info, effectiveProcessName);
             app.uid = Process.myUid();
             app.bpid = bpid;
             app.buid = BPackageManagerService.get().getAppId(packageName);
             app.callingBUid = getBUidByPidOrPackageName(callingPid, packageName);
             app.userId = userId;
 
-            bProcess.put(processName, app);
+            bProcess.put(effectiveProcessName, app);
             mPidsSelfLocked.add(app);
 
             synchronized (mProcessMap) {
@@ -213,7 +215,17 @@ public class BProcessManagerService implements ISystemService {
             Map<String, ProcessRecord> processRecordMap = mProcessMap.get(buid);
             if (processRecordMap == null)
                 return null;
-            return processRecordMap.get(processName);
+            ProcessRecord byName = processRecordMap.get(processName);
+            if (byName != null) return byName;
+            String effectiveProcessName = CloneProfileConfig.getProcessName(packageName, userId, processName);
+            byName = processRecordMap.get(effectiveProcessName);
+            if (byName != null) return byName;
+            for (ProcessRecord value : processRecordMap.values()) {
+                if (packageName.equals(value.getPackageName())) {
+                    return value;
+                }
+            }
+            return null;
         }
     }
 
