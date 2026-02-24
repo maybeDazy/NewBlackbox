@@ -364,15 +364,16 @@ public class BActivityManager extends BlackManager<IBActivityManagerService> {
         }
     }
 
-    public void onFinishActivity(IBinder token) {
+    public boolean onFinishActivity(IBinder token) {
         try {
             IBActivityManagerService service = getService();
             if (service != null) {
-                service.onFinishActivity(token);
+                return service.onFinishActivity(token);
             }
         } catch (RemoteException e) {
             e.printStackTrace();
         }
+        return false;
     }
 
     public RunningAppProcessInfo getRunningAppProcesses(String callerPackage, int userId) throws RemoteException {

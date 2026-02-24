@@ -115,7 +115,26 @@ public class IContentProviderProxy extends ClassInvocationStub {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             try {
-                
+                // Check if we are querying android_id
+                if (args != null) {
+                    for (Object arg : args) {
+                        if (arg instanceof String && "android_id".equals(arg)) {
+                            top.niunaijun.blackbox.utils.Slog.d(TAG, "Intercepted android_id in call()");
+                            if (top.niunaijun.blackbox.app.BActivityThread.getAppConfig() != null &&
+                                    top.niunaijun.blackbox.app.BActivityThread.getAppConfig().spoofProps != null) {
+                                String spoofId = top.niunaijun.blackbox.app.BActivityThread.getAppConfig().spoofProps.get("ANDROID_ID");
+                                if (spoofId != null && !spoofId.isEmpty()) {
+                                    top.niunaijun.blackbox.utils.Slog.d(TAG, "Returning spoofed android_id from call(): " + spoofId);
+                                    // call returns a Bundle
+                                    android.os.Bundle bundle = new android.os.Bundle();
+                                    bundle.putString("value", spoofId);
+                                    return bundle;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 AttributionSourceUtils.fixAttributionSourceInArgs(args);
                 
                 
