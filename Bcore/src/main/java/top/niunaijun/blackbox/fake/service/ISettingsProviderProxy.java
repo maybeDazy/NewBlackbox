@@ -214,13 +214,19 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
     }
 
     private static String resolveCloneAndroidId(Object[] args) {
-        String packageName = extractCallingPackage(args);
-        if (packageName == null || packageName.trim().isEmpty()) {
-            packageName = BActivityThread.getAppPackageName();
+        String packageName = BActivityThread.getAppPackageName();
+        if (packageName == null || packageName.trim().isEmpty() || packageName.equals(BlackBoxCore.getHostPkg())) {
+            packageName = extractCallingPackage(args);
         }
-        int userId = extractUserId(args);
+        if (packageName == null || packageName.trim().isEmpty()) {
+            packageName = BlackBoxCore.getHostPkg();
+        }
+        int userId = BActivityThread.getUserId();
         if (userId < 0) {
-            userId = BActivityThread.getUserId();
+            userId = extractUserId(args);
+        }
+        if (userId < 0) {
+            userId = 0;
         }
         return CloneProfileConfig.getAndroidId(packageName, userId);
     }
@@ -255,10 +261,41 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
         if (value == null) return false;
         if (!value.contains(".")) return false;
         String lower = value.toLowerCase();
-        if (lower.contains("android_id") || lower.contains("ssaid") || lower.contains("feature_flag")) {
+        if (lower.contains("android_id") || lower.contains("ssaid") || lower.contains("feature_flag") || lower.startsWith("get_") || lower.startsWith("put_")) {
+            return false;
+        }
+        if (value.equals(BlackBoxCore.getHostPkg()) || "android".equals(lower)) {
             return false;
         }
         return true;
+    }
+
+    @ProxyMethod("call")
+    public static class Call extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String methodName = null;
+            String requestArg = null;
+            if (args != null) {
+                for (Object arg : args) {
+                    if (arg instanceof String) {
+                        String value = (String) arg;
+                        if (methodName == null && (value.startsWith("GET_") || value.startsWith("PUT_"))) {
+                            methodName = value;
+                        } else if (requestArg == null) {
+                            requestArg = value;
+                        }
+                    }
+                }
+            }
+
+            if (isAndroidIdRequest(requestArg) || (isAndroidIdRequest(extractSettingKey(args)) && methodName != null && methodName.startsWith("GET_"))) {
+                Bundle bundle = new Bundle();
+                bundle.putString("value", resolveCloneAndroidId(args));
+                return bundle;
+            }
+            return method.invoke(who, args);
+        }
     }
 
 }
