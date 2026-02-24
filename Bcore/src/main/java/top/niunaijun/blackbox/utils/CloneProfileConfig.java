@@ -4,6 +4,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
 
+import java.util.Locale;
+import java.util.UUID;
+
 import top.niunaijun.blackbox.BlackBoxCore;
 
 public final class CloneProfileConfig {
@@ -25,9 +28,28 @@ public final class CloneProfileConfig {
         return TextUtils.isEmpty(value) ? defaultValue : value;
     }
 
-    public static String getAndroidId(String packageName, int userId) {
-        String value = prefs().getString(key("clone_android_id", packageName, userId), null);
-        return TextUtils.isEmpty(value) ? null : value;
+    public static synchronized String getAndroidId(String packageName, int userId) {
+        SharedPreferences sharedPreferences = prefs();
+        String prefKey = key("clone_android_id", packageName, userId);
+        String value = sharedPreferences.getString(prefKey, null);
+        if (!TextUtils.isEmpty(value)) {
+            return normalizeAndroidId(value);
+        }
+
+        String generated = UUID.randomUUID().toString().replace("-", "").toLowerCase(Locale.US);
+        if (generated.length() > 16) {
+            generated = generated.substring(0, 16);
+        }
+        sharedPreferences.edit().putString(prefKey, generated).apply();
+        return generated;
+    }
+
+    private static String normalizeAndroidId(String value) {
+        String normalized = value.replace("-", "").trim().toLowerCase(Locale.US);
+        if (normalized.length() > 16) {
+            return normalized.substring(0, 16);
+        }
+        return normalized;
     }
 
     public static String getModel(String packageName, int userId) {

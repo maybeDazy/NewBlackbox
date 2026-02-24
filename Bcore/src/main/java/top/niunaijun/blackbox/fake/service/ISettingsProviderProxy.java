@@ -47,11 +47,8 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                     Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
                     return "true";
                 }
-                if (Settings.Secure.ANDROID_ID.equalsIgnoreCase(key)) {
-                    String spoofed = CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
-                    if (spoofed != null) {
-                        return spoofed;
-                    }
+                if (isAndroidIdRequest(key)) {
+                    return CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
                 }
                 
                 return method.invoke(who, args);
@@ -77,11 +74,8 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                     Slog.d(TAG, "Intercepting feature flag query: " + key + ", returning safe default");
                     return "true";
                 }
-                if (Settings.Secure.ANDROID_ID.equalsIgnoreCase(key)) {
-                    String spoofed = CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
-                    if (spoofed != null) {
-                        return spoofed;
-                    }
+                if (isAndroidIdRequest(key)) {
+                    return CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
                 }
                 
                 return method.invoke(who, args);
@@ -197,10 +191,25 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
             }
         }
     }
+    private static boolean isAndroidIdRequest(String key) {
+        if (key == null) return false;
+        String lower = key.toLowerCase();
+        return Settings.Secure.ANDROID_ID.equalsIgnoreCase(lower) || lower.contains("android_id") || lower.contains("ssaid");
+    }
+
     private static String extractSettingKey(Object[] args) {
-        if (args == null || args.length == 0 || !(args[0] instanceof String)) {
+        if (args == null || args.length == 0) {
             return null;
         }
-        return (String) args[0];
+        for (Object arg : args) {
+            if (arg instanceof String) {
+                String key = (String) arg;
+                String lower = key.toLowerCase();
+                if (lower.contains("android_id") || lower.contains("ssaid") || lower.contains("feature_flag") || Settings.Secure.ANDROID_ID.equalsIgnoreCase(key)) {
+                    return key;
+                }
+            }
+        }
+        return args[0] instanceof String ? (String) args[0] : null;
     }
 }
