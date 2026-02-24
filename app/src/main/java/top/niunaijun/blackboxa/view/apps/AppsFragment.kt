@@ -8,6 +8,8 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.LinearLayout
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.os.bundleOf
 import androidx.fragment.app.Fragment
@@ -17,11 +19,13 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import cbfg.rvadapter.RVAdapter
 import com.afollestad.materialdialogs.MaterialDialog
+import com.afollestad.materialdialogs.customview.customView
 import top.niunaijun.blackbox.BlackBoxCore
 import top.niunaijun.blackboxa.R
 import top.niunaijun.blackboxa.bean.AppInfo
 import top.niunaijun.blackboxa.databinding.FragmentAppsBinding
 import top.niunaijun.blackboxa.util.InjectionUtil
+import top.niunaijun.blackboxa.data.CloneProfileStore
 import top.niunaijun.blackboxa.util.ShortcutUtil
 import top.niunaijun.blackboxa.util.inflate
 import top.niunaijun.blackboxa.util.MemoryManager
@@ -148,7 +152,7 @@ class AppsFragment : Fragment() {
             mAdapter.setItemClickListener { _, data, _ ->
                 try {
                     showLoading()
-                    viewModel.launchApk(data.packageName, userID)
+                    viewModel.launchApk(data.packageName, data.userId)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error launching app: ${e.message}")
                     hideLoading()
@@ -357,7 +361,11 @@ class AppsFragment : Fragment() {
                                     }
 
                                     R.id.app_shortcut -> {
-                                        ShortcutUtil.createShortcut(requireContext(), userID, data)
+                                        ShortcutUtil.createShortcut(requireContext(), data.userId, data)
+                                    }
+
+                                    R.id.app_edit_profile -> {
+                                        showEditCloneProfileDialog(data)
                                     }
                                 }
                                 return@setOnMenuItemClickListener true
@@ -425,7 +433,7 @@ class AppsFragment : Fragment() {
             viewModel.updateSortLiveData.observe(viewLifecycleOwner) {
                 try {
                     if (this::mAdapter.isInitialized) {
-                        viewModel.updateApkOrder(userID, mAdapter.getItems())
+                        if (userID >= 0) viewModel.updateApkOrder(userID, mAdapter.getItems())
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error observing sort data: ${e.message}")
@@ -454,7 +462,7 @@ class AppsFragment : Fragment() {
                 positiveButton(R.string.done) {
                     try {
                         showLoading()
-                        viewModel.unInstall(info.packageName, userID)
+                        viewModel.unInstall(info.packageName, info.userId)
                     } catch (e: Exception) {
                         Log.e(TAG, "Error uninstalling app: ${e.message}")
                         hideLoading()
@@ -475,7 +483,7 @@ class AppsFragment : Fragment() {
                 message(text = getString(R.string.app_stop_hint,info.name))
                 positiveButton(R.string.done) {
                     try {
-                        BlackBoxCore.get().stopPackage(info.packageName, userID)
+                        BlackBoxCore.get().stopPackage(info.packageName, info.userId)
                         toast(getString(R.string.is_stop,info.name))
                     } catch (e: Exception) {
                         Log.e(TAG, "Error stopping app: ${e.message}")
@@ -497,7 +505,7 @@ class AppsFragment : Fragment() {
                 positiveButton(R.string.done) {
                     try {
                         showLoading()
-                        viewModel.clearApkData(info.packageName, userID)
+                        viewModel.clearApkData(info.packageName, info.userId)
                     } catch (e: Exception) {
                         Log.e(TAG, "Error clearing app data: ${e.message}")
                         hideLoading()
@@ -510,10 +518,54 @@ class AppsFragment : Fragment() {
         }
     }
 
+    private fun showEditCloneProfileDialog(info: AppInfo) {
+        val context = requireContext()
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 24, 32, 0)
+        }
+
+        val nameInput = EditText(context).apply {
+            hint = getString(R.string.app_edit_profile_name)
+            setText(CloneProfileStore.getDisplayName(info.packageName, info.userId) ?: info.name)
+        }
+        val processInput = EditText(context).apply {
+            hint = getString(R.string.app_edit_profile_process)
+            setText(CloneProfileStore.getProcessName(info.packageName, info.userId) ?: info.processName)
+        }
+        val androidIdInput = EditText(context).apply {
+            hint = getString(R.string.app_edit_profile_android_id)
+            setText(CloneProfileStore.getAndroidId(info.packageName, info.userId) ?: "")
+        }
+        val modelInput = EditText(context).apply {
+            hint = getString(R.string.app_edit_profile_model)
+            setText(CloneProfileStore.getModel(info.packageName, info.userId) ?: "")
+        }
+
+        layout.addView(nameInput)
+        layout.addView(processInput)
+        layout.addView(androidIdInput)
+        layout.addView(modelInput)
+
+        MaterialDialog(context).show {
+            title(res = R.string.app_edit_profile)
+            customView(view = layout, scrollable = true)
+            positiveButton(res = R.string.done) {
+                CloneProfileStore.setDisplayName(info.packageName, info.userId, nameInput.text.toString().trim())
+                CloneProfileStore.setProcessName(info.packageName, info.userId, processInput.text.toString().trim())
+                CloneProfileStore.setAndroidId(info.packageName, info.userId, androidIdInput.text.toString().trim())
+                CloneProfileStore.setModel(info.packageName, info.userId, modelInput.text.toString().trim())
+                viewModel.getInstalledApps(userID)
+                toast("Saved clone profile for ${info.packageName} (u${info.userId})")
+            }
+            negativeButton(res = R.string.cancel)
+        }
+    }
+
     fun installApk(source: String) {
         try {
             showLoading()
-            viewModel.install(source, userID)
+            viewModel.install(source, if (userID < 0) 0 else userID)
         } catch (e: Exception) {
             Log.e(TAG, "Error installing APK: ${e.message}")
             hideLoading()
