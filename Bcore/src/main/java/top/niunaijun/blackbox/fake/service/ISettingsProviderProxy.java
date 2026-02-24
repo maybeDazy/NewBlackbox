@@ -48,7 +48,7 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                     return "true";
                 }
                 if (isAndroidIdRequest(key)) {
-                    return CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
+                    return resolveCloneAndroidId(args);
                 }
                 
                 return method.invoke(who, args);
@@ -75,7 +75,7 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                     return "true";
                 }
                 if (isAndroidIdRequest(key)) {
-                    return CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
+                    return resolveCloneAndroidId(args);
                 }
                 
                 return method.invoke(who, args);
@@ -212,4 +212,53 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
         }
         return args[0] instanceof String ? (String) args[0] : null;
     }
+
+    private static String resolveCloneAndroidId(Object[] args) {
+        String packageName = extractCallingPackage(args);
+        if (packageName == null || packageName.trim().isEmpty()) {
+            packageName = BActivityThread.getAppPackageName();
+        }
+        int userId = extractUserId(args);
+        if (userId < 0) {
+            userId = BActivityThread.getUserId();
+        }
+        return CloneProfileConfig.getAndroidId(packageName, userId);
+    }
+
+    private static String extractCallingPackage(Object[] args) {
+        if (args == null) return null;
+        for (Object arg : args) {
+            if (arg instanceof String) {
+                String value = (String) arg;
+                if (isLikelyPackageName(value)) {
+                    return value;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int extractUserId(Object[] args) {
+        if (args == null) return -1;
+        for (Object arg : args) {
+            if (arg instanceof Integer) {
+                int value = (Integer) arg;
+                if (value >= 0 && value <= 99999) {
+                    return value;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isLikelyPackageName(String value) {
+        if (value == null) return false;
+        if (!value.contains(".")) return false;
+        String lower = value.toLowerCase();
+        if (lower.contains("android_id") || lower.contains("ssaid") || lower.contains("feature_flag")) {
+            return false;
+        }
+        return true;
+    }
+
 }
