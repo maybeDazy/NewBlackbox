@@ -7,6 +7,7 @@ import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.SystemClock;
 
 import java.io.File;
 import java.lang.reflect.Method;
@@ -27,6 +28,17 @@ import static android.content.pm.PackageManager.GET_META_DATA;
 
 public class ActivityManagerCommonProxy {
     public static final String TAG = "CommonStub";
+    private static final String ACTION_REQUEST_PERMISSIONS = "android.content.pm.action.REQUEST_PERMISSIONS";
+    // Some apps trigger multiple startActivity calls as part of startup handshakes.
+    // Keep throttling disabled by default to avoid introducing perceived launch lag.
+    private static final boolean ENABLE_ACTIVITY_THROTTLE = false;
+    private static long sLastPermissionRequestUptime;
+    private static String sLastPermissionRequestKey;
+    private static long sLastProxyLaunchUptime;
+    private static String sLastProxyLaunchKey;
+    private static long sLastSelfIntentLaunchUptime;
+    private static String sLastSelfIntentLaunchKey;
+
 
     @ProxyMethod("startActivity")
     public static class StartActivity extends MethodHook {
@@ -38,9 +50,28 @@ public class ActivityManagerCommonProxy {
             assert intent != null;
             
             
+            if (isRapidDuplicateProxyLaunch(intent)) {
+                Slog.w(TAG, "Dropped rapid duplicate proxy launch: " + intent);
+                return 0;
+            }
+
             if (intent.getParcelableExtra("_B_|_target_") != null) {
                 return method.invoke(who, args);
             }
+
+            if (isPermissionRequestIntent(intent)) {
+                if (shouldThrottlePermissionRequest(intent)) {
+                    Slog.w(TAG, "Throttled duplicated permission request intent: " + intent);
+                    return 0;
+                }
+                return method.invoke(who, args);
+            }
+
+            if (shouldThrottleSelfComponentLaunch(intent)) {
+                Slog.w(TAG, "Throttled rapid duplicate self deep-link launch: " + intent);
+                return 0;
+            }
+
             if (ComponentUtils.isRequestInstall(intent)) {
                 File file = FileProviderHandler.convertFile(BActivityThread.getApplication(), intent.getData());
                 
@@ -92,6 +123,10 @@ public class ActivityManagerCommonProxy {
                         BActivityThread.getUserId());
                 if (resolveInfo == null) {
                     intent.setPackage(origPackage);
+                    if (shouldBlockHostFallback(intent)) {
+                        Slog.w(TAG, "Blocked host fallback for in-app deep link to avoid intent leak: " + intent);
+                        return 0;
+                    }
                     return method.invoke(who, args);
                 }
             }
@@ -217,4 +252,142 @@ public class ActivityManagerCommonProxy {
             return BlackBoxCore.getBActivityManager().getCallingActivity((IBinder) args[0], BActivityThread.getUserId());
         }
     }
+
+    private static boolean isRapidDuplicateProxyLaunch(Intent intent) {
+        if (!ENABLE_ACTIVITY_THROTTLE) {
+            return false;
+        }
+        if (intent == null) return false;
+        ComponentName component = intent.getComponent();
+        if (component == null) return false;
+
+        String cls = component.getClassName();
+        if (cls == null || !cls.contains("top.niunaijun.blackbox.proxy.ProxyActivity$P")) {
+            return false;
+        }
+
+        Intent target = intent.getParcelableExtra("_B_|_target_");
+        String targetCmp = target != null && target.getComponent() != null
+                ? target.getComponent().flattenToShortString() : "null";
+        String key = BActivityThread.getAppPackageName() + "@" + BActivityThread.getUserId() + "@" + cls + "@" + targetCmp;
+
+        long now = SystemClock.elapsedRealtime();
+        synchronized (ActivityManagerCommonProxy.class) {
+            boolean duplicated = key.equals(sLastProxyLaunchKey) && (now - sLastProxyLaunchUptime) < 800;
+            sLastProxyLaunchKey = key;
+            sLastProxyLaunchUptime = now;
+            return duplicated;
+        }
+    }
+
+    private static boolean isPermissionRequestIntent(Intent intent) {
+        if (intent == null) return false;
+
+        if (ACTION_REQUEST_PERMISSIONS.equals(intent.getAction())) {
+            return true;
+        }
+
+        String pkg = intent.getPackage();
+        if (pkg != null && pkg.contains("permissioncontroller")) {
+            return true;
+        }
+
+        ComponentName component = intent.getComponent();
+        return component != null && component.getPackageName() != null
+                && component.getPackageName().contains("permissioncontroller");
+    }
+
+    private static boolean shouldThrottlePermissionRequest(Intent intent) {
+        if (!ENABLE_ACTIVITY_THROTTLE) {
+            return false;
+        }
+        String key = BActivityThread.getAppPackageName() + "@" + BActivityThread.getUserId();
+        long now = SystemClock.elapsedRealtime();
+        synchronized (ActivityManagerCommonProxy.class) {
+            boolean duplicated = key.equals(sLastPermissionRequestKey) && (now - sLastPermissionRequestUptime) < 1200;
+            sLastPermissionRequestKey = key;
+            sLastPermissionRequestUptime = now;
+            return duplicated;
+        }
+    }
+
+    private static boolean shouldBlockHostFallback(Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+        if (!Intent.ACTION_VIEW.equals(intent.getAction())) {
+            return false;
+        }
+
+        String appPkg = BActivityThread.getAppPackageName();
+        String intentPkg = intent.getPackage();
+        if (appPkg == null || intentPkg == null || !appPkg.equals(intentPkg)) {
+            return false;
+        }
+
+        Uri data = intent.getData();
+        if (data == null) {
+            return false;
+        }
+
+        String scheme = data.getScheme();
+        if (scheme == null) {
+            return false;
+        }
+
+        String normalized = scheme.toLowerCase();
+        return !("http".equals(normalized) || "https".equals(normalized));
+    }
+
+    private static boolean shouldThrottleSelfComponentLaunch(Intent intent) {
+        if (!ENABLE_ACTIVITY_THROTTLE) {
+            return false;
+        }
+        if (intent == null) {
+            return false;
+        }
+        ComponentName component = intent.getComponent();
+        if (component == null) {
+            return false;
+        }
+
+        String appPkg = BActivityThread.getAppPackageName();
+        if (appPkg == null || !appPkg.equals(component.getPackageName())) {
+            return false;
+        }
+
+        // Only throttle explicit VIEW deep-link loops. Do not block normal in-app button navigation.
+        if (!Intent.ACTION_VIEW.equals(intent.getAction())) {
+            return false;
+        }
+
+        String data = intent.getDataString();
+        if (data == null || data.isEmpty()) {
+            return false;
+        }
+        Uri uri = intent.getData();
+        if (uri != null) {
+            String scheme = uri.getScheme();
+            if (scheme != null) {
+                String normalized = scheme.toLowerCase();
+                if ("http".equals(normalized) || "https".equals(normalized)) {
+                    return false;
+                }
+            }
+        }
+
+        // Explicit in-app deep-link launches that loop rapidly (tab/deeplink bounce) can cause
+        // repeated proxy transitions; keep a conservative short-window dedupe.
+        String key = appPkg + "@" + BActivityThread.getUserId() + "@"
+                + component.flattenToShortString() + "@" + (data == null ? "" : data);
+
+        long now = SystemClock.elapsedRealtime();
+        synchronized (ActivityManagerCommonProxy.class) {
+            boolean duplicated = key.equals(sLastSelfIntentLaunchKey) && (now - sLastSelfIntentLaunchUptime) < 300;
+            sLastSelfIntentLaunchKey = key;
+            sLastSelfIntentLaunchUptime = now;
+            return duplicated;
+        }
+    }
+
 }
