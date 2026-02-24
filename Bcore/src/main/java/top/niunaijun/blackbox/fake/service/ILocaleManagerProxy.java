@@ -60,7 +60,7 @@ public class ILocaleManagerProxy extends BinderInvocationStub {
         try {
             Object localeManager = context.getSystemService(SERVICE);
             if (localeManager != null) {
-                Reflector.on(localeManager).field("mService").set(proxyInvocation);
+                Reflector.with(localeManager).field("mService").set(proxyInvocation);
             }
         } catch (Throwable e) {
             Slog.d(TAG, "Unable to patch LocaleManager instance: " + e.getMessage());
