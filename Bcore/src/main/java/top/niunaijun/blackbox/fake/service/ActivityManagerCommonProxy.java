@@ -1,5 +1,6 @@
 package top.niunaijun.blackbox.fake.service;
 
+import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
@@ -11,6 +12,7 @@ import android.os.SystemClock;
 
 import java.io.File;
 import java.lang.reflect.Method;
+import java.util.List;
 
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.BActivityThread;
@@ -223,7 +225,23 @@ public class ActivityManagerCommonProxy {
     public static class FinishActivity extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            BlackBoxCore.getBActivityManager().onFinishActivity((IBinder) args[0]);
+            if (args != null) {
+                if (args.length > 1 && args[1] instanceof Integer) {
+                    int code = (Integer) args[1];
+                    String dataStr = "null";
+                    if (args.length > 2 && args[2] instanceof Intent) {
+                        dataStr = String.valueOf(args[2]);
+                    }
+                    android.util.Log.d("DEBUG-AUTH", "finishActivity: code=" + code + ", data=" + dataStr);
+                }
+            }
+            boolean suppressed = BlackBoxCore.getBActivityManager().onFinishActivity((IBinder) args[0]);
+            if (suppressed) {
+                // Loop detected — do NOT forward finish to real system.
+                // Return true to tell the caller finish "succeeded" without actually destroying the activity.
+                android.util.Log.e("FinishActivity", "LOOP BREAKER: finish() call blocked by suppression");
+                return true;
+            }
             return method.invoke(who, args);
         }
     }

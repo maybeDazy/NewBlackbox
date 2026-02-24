@@ -56,6 +56,22 @@ public class SystemProviderStub extends ClassInvocationStub implements BContentP
 
         if ("call".equals(methodName)) {
             if (args != null) {
+                // Check if we are querying android_id
+                for (Object arg : args) {
+                    if (arg instanceof String && "android_id".equals(arg)) {
+                       if (top.niunaijun.blackbox.app.BActivityThread.getAppConfig() != null &&
+                            top.niunaijun.blackbox.app.BActivityThread.getAppConfig().spoofProps != null) {
+                            String spoofId = top.niunaijun.blackbox.app.BActivityThread.getAppConfig().spoofProps.get("ANDROID_ID");
+                            if (spoofId != null && !spoofId.isEmpty()) {
+                                top.niunaijun.blackbox.utils.Slog.d("SystemProviderStub", "Intercepted android_id in SystemProviderStub.call(), returning: " + spoofId);
+                                android.os.Bundle bundle = new android.os.Bundle();
+                                bundle.putString("value", spoofId);
+                                return bundle;
+                            }
+                        }
+                    }
+                }
+
                 Class<?> attributionSourceClass = BRAttributionSource.getRealClass();
                 for (Object arg : args) {
                     if (arg != null && attributionSourceClass != null
