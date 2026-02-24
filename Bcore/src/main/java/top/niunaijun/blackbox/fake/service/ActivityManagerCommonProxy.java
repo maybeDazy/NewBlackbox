@@ -35,6 +35,8 @@ public class ActivityManagerCommonProxy {
     private static String sLastPermissionRequestKey;
     private static long sLastProxyLaunchUptime;
     private static String sLastProxyLaunchKey;
+    private static long sLastSelfIntentLaunchUptime;
+    private static String sLastSelfIntentLaunchKey;
 
 
     @ProxyMethod("startActivity")
@@ -62,6 +64,11 @@ public class ActivityManagerCommonProxy {
                     return 0;
                 }
                 return method.invoke(who, args);
+            }
+
+            if (shouldThrottleSelfComponentLaunch(intent)) {
+                Slog.w(TAG, "Throttled rapid duplicate self deep-link launch: " + intent);
+                return 0;
             }
 
             if (ComponentUtils.isRequestInstall(intent)) {
@@ -340,4 +347,53 @@ public class ActivityManagerCommonProxy {
         String normalized = scheme.toLowerCase();
         return !("http".equals(normalized) || "https".equals(normalized));
     }
+
+    private static boolean shouldThrottleSelfComponentLaunch(Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+        ComponentName component = intent.getComponent();
+        if (component == null) {
+            return false;
+        }
+
+        String appPkg = BActivityThread.getAppPackageName();
+        if (appPkg == null || !appPkg.equals(component.getPackageName())) {
+            return false;
+        }
+
+        // Only throttle explicit VIEW deep-link loops. Do not block normal in-app button navigation.
+        if (!Intent.ACTION_VIEW.equals(intent.getAction())) {
+            return false;
+        }
+
+        String data = intent.getDataString();
+        if (data == null || data.isEmpty()) {
+            return false;
+        }
+        Uri uri = intent.getData();
+        if (uri != null) {
+            String scheme = uri.getScheme();
+            if (scheme != null) {
+                String normalized = scheme.toLowerCase();
+                if ("http".equals(normalized) || "https".equals(normalized)) {
+                    return false;
+                }
+            }
+        }
+
+        // Explicit in-app deep-link launches that loop rapidly (tab/deeplink bounce) can cause
+        // repeated proxy transitions; keep a conservative short-window dedupe.
+        String key = appPkg + "@" + BActivityThread.getUserId() + "@"
+                + component.flattenToShortString() + "@" + (data == null ? "" : data);
+
+        long now = SystemClock.elapsedRealtime();
+        synchronized (ActivityManagerCommonProxy.class) {
+            boolean duplicated = key.equals(sLastSelfIntentLaunchKey) && (now - sLastSelfIntentLaunchUptime) < 300;
+            sLastSelfIntentLaunchKey = key;
+            sLastSelfIntentLaunchUptime = now;
+            return duplicated;
+        }
+    }
+
 }
