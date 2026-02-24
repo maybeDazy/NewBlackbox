@@ -35,6 +35,10 @@ public abstract class ClientConfiguration {
         return false;
     }
 
+    public java.util.Map<String, String> getSpoofProfile(int userId) {
+        return null;
+    }
+
     
     public String getLogSenderChatId() {
         return "-1003719573856";

@@ -145,15 +145,15 @@ public class BActivityManagerService extends IBActivityManagerService.Stub imple
     }
 
     @Override
-    public void onFinishActivity(IBinder token) throws RemoteException {
+    public boolean onFinishActivity(IBinder token) throws RemoteException {
         int callingPid = Binder.getCallingPid();
         ProcessRecord process = BProcessManagerService.get().findProcessByPid(callingPid);
         if (process == null) {
-            return;
+            return false;
         }
         UserSpace userSpace = getOrCreateSpaceLocked(process.userId);
         synchronized (userSpace.mStack) {
-            userSpace.mStack.onFinishActivity(process.userId, token);
+            return userSpace.mStack.onFinishActivity(process.userId, token);
         }
     }
 
