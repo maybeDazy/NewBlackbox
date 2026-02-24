@@ -51,7 +51,6 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                     return CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
                 }
                 
-                
                 return method.invoke(who, args);
             } catch (Exception e) {
                 String errorMsg = e.getMessage();
@@ -78,7 +77,6 @@ public class ISettingsProviderProxy extends ClassInvocationStub {
                 if (isAndroidIdRequest(key)) {
                     return CloneProfileConfig.getAndroidId(BActivityThread.getAppPackageName(), BActivityThread.getUserId());
                 }
-                
                 
                 return method.invoke(who, args);
             } catch (Exception e) {

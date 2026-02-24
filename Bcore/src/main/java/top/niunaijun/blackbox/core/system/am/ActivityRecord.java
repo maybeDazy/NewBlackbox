@@ -14,6 +14,8 @@ public class ActivityRecord extends Binder {
     public TaskRecord task;
     public IBinder token;
     public IBinder resultTo;
+    public String resultWho;
+    public int requestCode;
     public ActivityInfo info;
     public ComponentName component;
     public Intent intent;
