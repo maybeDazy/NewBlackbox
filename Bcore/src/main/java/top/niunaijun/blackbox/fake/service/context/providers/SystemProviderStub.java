@@ -116,25 +116,53 @@ public class SystemProviderStub extends ClassInvocationStub implements BContentP
         String requestArg = null;
         Bundle extras = null;
 
+        String[] stringArgs = new String[args.length];
+        int stringCount = 0;
         for (Object arg : args) {
             if (arg instanceof String) {
                 String value = (String) arg;
-                if (callMethod == null && value.startsWith("GET_")) {
+                stringArgs[stringCount++] = value;
+                if (callMethod == null && value.toUpperCase().startsWith("GET_")) {
                     callMethod = value;
-                } else if (requestArg == null) {
-                    requestArg = value;
                 }
             } else if (arg instanceof Bundle && extras == null) {
                 extras = (Bundle) arg;
             }
         }
 
-        if (callMethod == null || requestArg == null) {
+        if (callMethod == null) {
             return null;
         }
-        if (!("GET_secure".equalsIgnoreCase(callMethod) || callMethod.toUpperCase().startsWith("GET_"))) {
+
+        for (int i = 0; i < stringCount; i++) {
+            if (callMethod.equals(stringArgs[i])) {
+                if (i + 1 < stringCount) {
+                    requestArg = stringArgs[i + 1];
+                }
+                break;
+            }
+        }
+
+        if (requestArg == null) {
+            for (int i = 0; i < stringCount; i++) {
+                String candidate = stringArgs[i];
+                if (candidate == null) {
+                    continue;
+                }
+                String lower = candidate.toLowerCase();
+                if (Settings.Secure.ANDROID_ID.equalsIgnoreCase(candidate)
+                        || lower.contains("android_id")
+                        || lower.contains("ssaid")) {
+                    requestArg = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (requestArg == null) {
             return null;
         }
+
         String keyLower = requestArg.toLowerCase();
         if (!(Settings.Secure.ANDROID_ID.equalsIgnoreCase(requestArg)
                 || keyLower.contains("android_id")
@@ -161,7 +189,8 @@ public class SystemProviderStub extends ClassInvocationStub implements BContentP
         String androidId = CloneProfileConfig.getAndroidId(packageName, userId);
         Bundle result = new Bundle();
         result.putString("value", androidId);
-        Slog.d(TAG, "Hooked settings call for ANDROID_ID pkg=" + packageName + ", user=" + userId + ", value=" + androidId);
+        Slog.d(TAG, "Hooked settings call for ANDROID_ID method=" + callMethod + ", arg=" + requestArg
+                + ", pkg=" + packageName + ", user=" + userId + ", value=" + androidId);
         return result;
     }
 
