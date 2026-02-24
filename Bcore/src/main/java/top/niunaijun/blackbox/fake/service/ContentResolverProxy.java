@@ -1,6 +1,7 @@
 package top.niunaijun.blackbox.fake.service;
 
 import android.net.Uri;
+import android.os.Bundle;
 
 import java.lang.reflect.Method;
 
@@ -9,6 +10,8 @@ import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.fake.hook.ClassInvocationStub;
+import top.niunaijun.blackbox.utils.CloneProfileConfig;
+import top.niunaijun.blackbox.app.BActivityThread;
 
 
 public class ContentResolverProxy extends ClassInvocationStub {
@@ -143,4 +146,93 @@ public class ContentResolverProxy extends ClassInvocationStub {
             return method.invoke(who, args);
         }
     }
+
+    @ProxyMethod("call")
+    public static class Call extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Uri uri = null;
+            String callMethod = null;
+            String callArg = null;
+            Bundle extras = null;
+
+            if (args != null) {
+                for (Object arg : args) {
+                    if (arg instanceof Uri && uri == null) {
+                        uri = (Uri) arg;
+                    } else if (arg instanceof Bundle && extras == null) {
+                        extras = (Bundle) arg;
+                    } else if (arg instanceof String) {
+                        String value = (String) arg;
+                        if (callMethod == null && (value.startsWith("GET_") || value.startsWith("PUT_"))) {
+                            callMethod = value;
+                        } else if (callArg == null) {
+                            callArg = value;
+                        }
+                    }
+                }
+            }
+
+            if (isSettingsUri(uri) && isAndroidIdCall(callMethod, callArg)) {
+                String packageName = BActivityThread.getAppPackageName();
+                if (packageName == null || packageName.trim().isEmpty()) {
+                    packageName = extractPackageFromBundle(extras);
+                }
+                if (packageName == null || packageName.trim().isEmpty()) {
+                    packageName = BlackBoxCore.get().getCurrentAppPackage();
+                }
+                if (packageName == null || packageName.trim().isEmpty()) {
+                    packageName = BlackBoxCore.getHostPkg();
+                }
+                int userId = BActivityThread.getUserId();
+                if (userId < 0) {
+                    userId = 0;
+                }
+
+                Bundle result = new Bundle();
+                result.putString("value", CloneProfileConfig.getAndroidId(packageName, userId));
+                return result;
+            }
+
+            return method.invoke(who, args);
+        }
+
+
+        private String extractPackageFromBundle(Bundle extras) {
+            if (extras == null) {
+                return null;
+            }
+            String[] keys = new String[]{"package", "packageName", "calling_package", "caller_package", "android:query-arg-sql-selection"};
+            for (String key : keys) {
+                String value = extras.getString(key);
+                if (value != null && value.contains(".")) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        private boolean isSettingsUri(Uri uri) {
+            if (uri == null) {
+                return false;
+            }
+            String value = uri.toString();
+            return value != null && value.contains("settings");
+        }
+
+        private boolean isAndroidIdCall(String methodName, String requestArg) {
+            if (requestArg == null) {
+                return false;
+            }
+            String loweredArg = requestArg.toLowerCase();
+            if (!(loweredArg.contains("android_id") || loweredArg.contains("ssaid"))) {
+                return false;
+            }
+            if (methodName == null) {
+                return true;
+            }
+            return methodName.startsWith("GET_");
+        }
+    }
+
 }
