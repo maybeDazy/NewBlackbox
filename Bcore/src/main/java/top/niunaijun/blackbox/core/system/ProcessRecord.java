@@ -11,6 +11,7 @@ import java.util.Arrays;
 import top.niunaijun.blackbox.core.IBActivityThread;
 import top.niunaijun.blackbox.entity.AppConfig;
 import top.niunaijun.blackbox.proxy.ProxyManifest;
+import top.niunaijun.blackbox.BlackBoxCore;
 
 public class ProcessRecord extends Binder {
     public final ApplicationInfo info;
@@ -54,6 +55,15 @@ public class ProcessRecord extends Binder {
         config.callingBUid = callingBUid;
         config.userId = userId;
         config.token = this;
+        // Boost large heap for smooth scrolling
+        if ((info.flags & ApplicationInfo.FLAG_LARGE_HEAP) == 0) {
+            info.flags |= ApplicationInfo.FLAG_LARGE_HEAP;
+        }
+        try {
+            config.spoofProps = BlackBoxCore.get().getSpoofProfile(userId);
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
         return config;
     }
 
