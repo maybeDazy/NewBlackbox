@@ -3,7 +3,8 @@ package top.niunaijun.blackbox.entity;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Parcelable;
-
+import java.util.HashMap;
+import java.util.Map;
 
 
 public class AppConfig implements Parcelable {
@@ -17,6 +18,7 @@ public class AppConfig implements Parcelable {
     public int userId;
     public int callingBUid;
     public IBinder token;
+    public Map<String, String> spoofProps;
 
     @Override
     public int describeContents() {
@@ -33,6 +35,7 @@ public class AppConfig implements Parcelable {
         dest.writeInt(this.userId);
         dest.writeInt(this.callingBUid);
         dest.writeStrongBinder(token);
+        dest.writeMap(spoofProps);
     }
 
     public AppConfig() {
@@ -47,6 +50,7 @@ public class AppConfig implements Parcelable {
         this.userId = in.readInt();
         this.callingBUid = in.readInt();
         this.token = in.readStrongBinder();
+        this.spoofProps = in.readHashMap(HashMap.class.getClassLoader());
     }
 
     public static final Parcelable.Creator<AppConfig> CREATOR = new Parcelable.Creator<AppConfig>() {

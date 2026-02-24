@@ -115,6 +115,23 @@ public class ActivityStack {
         Log.d(TAG, "startActivityLocked : " + resolveInfo.activityInfo);
         ActivityInfo activityInfo = resolveInfo.activityInfo;
 
+        // Loop-breaker: use flattenToShortString() for consistent key with onFinishActivity
+        String compKey = new ComponentName(activityInfo.packageName, activityInfo.name).flattenToShortString();
+
+        // Clear expired suppressions
+        long now = System.currentTimeMillis();
+        if (!mSuppressedComponents.isEmpty() && now > mSuppressExpireTime) {
+            Log.d(TAG, "LOOP BREAKER: Suppression expired, clearing " + mSuppressedComponents.size() + " components");
+            mSuppressedComponents.clear();
+            mFinishTracker.clear();
+        }
+
+        // Check suppression set
+        if (mSuppressedComponents.contains(compKey)) {
+            Log.e(TAG, "LOOP BREAKER: Suppressing launch of " + compKey + " (in suppression set)");
+            return 0;
+        }
+
         ActivityRecord sourceRecord = findActivityRecordByToken(userId, resultTo);
         if (sourceRecord == null) {
             resultTo = null;
@@ -127,10 +144,32 @@ public class ActivityStack {
         String taskAffinity = ComponentUtils.getTaskAffinity(activityInfo);
 
         int launchModeFlags = 0;
-        boolean singleTop = containsFlag(intent, Intent.FLAG_ACTIVITY_SINGLE_TOP) || activityInfo.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP;
+        boolean singleTop = containsFlag(intent, Intent.FLAG_ACTIVITY_SINGLE_TOP) 
+                || activityInfo.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP
+                || activityInfo.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK;
         boolean newTask = containsFlag(intent, Intent.FLAG_ACTIVITY_NEW_TASK);
         boolean clearTop = containsFlag(intent, Intent.FLAG_ACTIVITY_CLEAR_TOP);
         boolean clearTask = containsFlag(intent, Intent.FLAG_ACTIVITY_CLEAR_TASK);
+
+        if ((flags & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0 && sourceRecord != null) {
+            // Transfer the result target from the source activity to the new one.
+            if (requestCode >= 0) {
+                 // Forward result usually expects no new requestCode, but if one is provided?
+                 // Android docs say: "When starting an activity with this flag, the requestCode must be >= 0."
+                 // Actually, it says calling startActivityForResult is required? Sdk says:
+                 // "startActivity(Intent)" uses -1.
+                 // If we have FORWARD_RESULT, we should use sourceRecord.resultTo.
+            }
+            resultTo = sourceRecord.resultTo;
+            resultWho = sourceRecord.resultWho;
+            requestCode = sourceRecord.requestCode;
+            
+            // Log flag detection
+            Log.d(TAG, "DEBUG-LOOP: FORWARD_RESULT detected from " + sourceRecord.component.flattenToShortString() 
+                + " to " + compKey + ". resultTo=" + resultTo);
+        }
+
+        // Log.d(TAG, "DEBUG-AUTH: start " + compKey + " reqCode=" + requestCode + " flags=0x" + Integer.toHexString(flags) + " caller=" + (sourceRecord != null ? sourceRecord.component.flattenToShortString() : "null") + " data=" + intent.getDataString());
 
         TaskRecord taskRecord = null;
         switch (activityInfo.launchMode) {
@@ -163,11 +202,24 @@ public class ActivityStack {
                 && ComponentUtils.intentFilterEquals(taskRecord.rootIntent, intent)
                 && taskRecord.rootIntent.getFlags() == intent.getFlags();
 
-        if (startTaskToFront)
-            return 0;
-
+        // FIX: Prevent infinite self-start loops for activities (like Coupang MainActivity)
+        // If the top activity is the same as the one being started, and the caller is also the same,
+        // force singleTop behavior to deliver new intent instead of creating a new instance.
         ActivityRecord topActivityRecord = taskRecord.getTopActivityRecord();
         ActivityRecord targetActivityRecord = findActivityRecordByComponentName(userId, ComponentUtils.toComponentName(activityInfo));
+        
+        if (topActivityRecord != null && topActivityRecord.component.equals(ComponentUtils.toComponentName(activityInfo))) {
+             if (sourceRecord != null && sourceRecord.component.equals(topActivityRecord.component)) {
+                 Log.d(TAG, "DEBUG-LOOP: Self-start detected for " + compKey + ". Forcing singleTop / newIntent behavior.");
+                 // Force singleTop consideration
+                 singleTop = true;
+                 // Disable startTaskToFront so we proceed to deliverNewIntentLocked logic
+                 startTaskToFront = false;
+             }
+        }
+
+        if (startTaskToFront)
+            return 0;
         ActivityRecord newIntentRecord = null;
         boolean ignore = false;
 
@@ -179,6 +231,17 @@ public class ActivityStack {
                         ActivityRecord next = targetActivityRecord.task.activities.get(i);
                         if (next != targetActivityRecord) {
                             next.finished = true;
+                            if (next.processRecord != null && next.token != null) {
+                                try {
+                                    if(next.processRecord != null && next.processRecord.bActivityThread != null && next.token != null) {
+                                      next.processRecord.bActivityThread.finishActivity(next.token);
+                                    }
+                                } catch (RemoteException | NullPointerException e) {
+                                    if (!(e instanceof android.os.DeadObjectException)) {
+                                          e.printStackTrace();
+                                    }
+                                }
+                            }
                             Log.d(TAG, "makerFinish: " + next.component.toString());
                         } else {
                             if (singleTop) {
@@ -195,7 +258,8 @@ public class ActivityStack {
         }
 
         if (singleTop && !clearTop) {
-            if (ComponentUtils.intentFilterEquals(topActivityRecord.intent, intent)) {
+            ComponentName toComponentName = ComponentUtils.toComponentName(activityInfo);
+            if (topActivityRecord.component.equals(toComponentName)) {
                 newIntentRecord = topActivityRecord;
             } else {
                 synchronized (mLaunchingActivities) {
@@ -210,7 +274,8 @@ public class ActivityStack {
         }
 
         if (activityInfo.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK && !clearTop) {
-            if (ComponentUtils.intentFilterEquals(topActivityRecord.intent, intent)) {
+            ComponentName toComponentName = ComponentUtils.toComponentName(activityInfo);
+            if (topActivityRecord.component.equals(toComponentName)) {
                 newIntentRecord = topActivityRecord;
             } else {
                 ActivityRecord record = findActivityRecordByComponentName(userId, ComponentUtils.toComponentName(activityInfo));
@@ -223,6 +288,12 @@ public class ActivityStack {
                             ActivityRecord next = taskRecord.activities.get(i);
                             if (next != record) {
                                 next.finished = true;
+                                if (next.processRecord != null && next.token != null) {
+                                    try {
+                                        next.processRecord.bActivityThread.finishActivity(next.token);
+                                    } catch (RemoteException ignored) {
+                                    }
+                                }
                             } else {
                                 break;
                             }
@@ -253,26 +324,44 @@ public class ActivityStack {
             return 0;
         }
 
-        if (resultTo == null) {
+        IBinder callerToken = resultTo;
+        if ((flags & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0 && sourceRecord != null) {
+            callerToken = sourceRecord.token;
+        }
+        if (callerToken == null) {
             ActivityRecord top = taskRecord.getTopActivityRecord();
             if (top != null) {
-                resultTo = top.token;
+                callerToken = top.token;
             }
         } else if (sourceTask != null) {
             ActivityRecord top = sourceTask.getTopActivityRecord();
             if (top != null) {
-                resultTo = top.token;
+                callerToken = top.token;
             }
         }
+
+        IBinder resultToken = null;
+        if ((flags & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0) {
+            resultToken = resultTo;
+        } else if (requestCode >= 0) {
+            resultToken = callerToken;
+        }
+
         return startActivityInSourceTask(intent,
-                resolvedType, resultTo, resultWho, requestCode, flags, options, userId, topActivityRecord, activityInfo, launchModeFlags);
+                resolvedType, callerToken, resultToken, resultWho, requestCode, flags, options, userId, topActivityRecord, activityInfo, launchModeFlags);
     }
 
     private void deliverNewIntentLocked(ActivityRecord activityRecord, Intent intent) {
+        // Update the record's intent to the new one, as this is now the effective intent
+        activityRecord.intent = intent;
         try {
-            activityRecord.processRecord.bActivityThread.handleNewIntent(activityRecord.token, intent);
-        } catch (RemoteException e) {
-            e.printStackTrace();
+            if (activityRecord.processRecord != null && activityRecord.processRecord.bActivityThread != null) {
+                activityRecord.processRecord.bActivityThread.handleNewIntent(activityRecord.token, intent);
+            }
+        } catch (RemoteException | NullPointerException e) {
+             if (!(e instanceof android.os.DeadObjectException)) {
+                e.printStackTrace();
+            }
         }
     }
 
@@ -338,7 +427,7 @@ public class ActivityStack {
     }
 
     private int startActivityInSourceTask(Intent intent, String resolvedType,
-                                          IBinder resultTo, String resultWho, int requestCode, int flags,
+                                          IBinder callerToken, IBinder resultToken, String resultWho, int requestCode, int flags,
                                           Bundle options,
                                           int userId, ActivityRecord sourceRecord, ActivityInfo activityInfo, int launchMode) {
         ActivityRecord selfRecord = newActivityRecord(intent, activityInfo, null, userId);
@@ -350,10 +439,10 @@ public class ActivityStack {
         }
         shadow.setAction(UUID.randomUUID().toString());
         shadow.addFlags(launchMode);
-        if (resultTo == null) {
+        if (callerToken == null) {
             shadow.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         }
-        return realStartActivityLocked(sourceRecord.processRecord.appThread, shadow, resolvedType, resultTo, resultWho, requestCode, flags, options);
+        return realStartActivityLocked(sourceRecord.processRecord.appThread, shadow, resolvedType, callerToken, resultWho, requestCode, flags, options);
     }
 
     private int realStartActivityLocked(IInterface appThread, Intent intent, String resolvedType,
@@ -548,15 +637,60 @@ public class ActivityStack {
         }
     }
 
-    public void onFinishActivity(int userId, IBinder token) {
+    // Track rapid finish→restart loop detection
+    private final Map<String, long[]> mFinishTracker = new LinkedHashMap<>();
+    private final Set<String> mSuppressedComponents = new HashSet<>();
+    private volatile long mSuppressExpireTime = 0;
+    // Allow more rapid restarts (15) within a shorter window (2s) to handle language changes
+    private static final int LOOP_THRESHOLD = 15;
+    private static final long LOOP_WINDOW_MS = 2000;
+    private static final long SUPPRESS_DURATION_MS = 5000; // suppress launches for 5s after detection
+
+    /**
+     * @return true if the finish was SUPPRESSED (loop detected), false if finish proceeded normally
+     */
+    public boolean onFinishActivity(int userId, IBinder token) {
         synchronized (mTasks) {
             synchronizeTasks();
             ActivityRecord activityRecord = findActivityRecordByToken(userId, token);
             if (activityRecord == null) {
-                return;
+                return false;
             }
+            // Use flattenToShortString ("pkg/cls") for consistent key — no object hash
+            String compKey = activityRecord.component.flattenToShortString();
+            Log.d(TAG, "onFinishActivity : " + compKey);
+
+            // If already suppressed, BLOCK the finish entirely
+            if (mSuppressedComponents.contains(compKey)) {
+                Log.e(TAG, "LOOP BREAKER: Blocking finish() for suppressed component: " + compKey);
+                return true; // suppressed
+            }
+
             activityRecord.finished = true;
-            Log.d(TAG, "onFinishActivity : " + activityRecord.component.toString());
+
+            // Detect rapid finish loop (same Activity finishing >= N times in LOOP_WINDOW_MS)
+            long now = System.currentTimeMillis();
+            long[] tracker = mFinishTracker.get(compKey);
+            if (tracker == null) {
+                tracker = new long[]{0, 0}; // [count, firstTimestamp]
+                mFinishTracker.put(compKey, tracker);
+            }
+            if (now - tracker[1] > LOOP_WINDOW_MS) {
+                // Reset window
+                tracker[0] = 1;
+                tracker[1] = now;
+            } else {
+                tracker[0]++;
+            }
+            if (tracker[0] >= LOOP_THRESHOLD && !mSuppressedComponents.contains(compKey)) {
+                Log.e(TAG, "LOOP DETECTED: " + compKey + " finished " + tracker[0]
+                        + " times in " + (now - tracker[1]) + "ms. SUPPRESSING future launches.");
+                Log.e(TAG, Log.getStackTraceString(new Throwable("Finish loop stacktrace")));
+                // Add to suppression set — do NOT reset tracker count
+                mSuppressedComponents.add(compKey);
+                mSuppressExpireTime = now + SUPPRESS_DURATION_MS;
+            }
+            return false; // not suppressed, finish proceeded
         }
     }
 
@@ -580,11 +714,20 @@ public class ActivityStack {
             ActivityRecord activityRecordByToken = findActivityRecordByToken(userId, token);
             if (activityRecordByToken != null) {
                 ActivityRecord resultTo = findActivityRecordByToken(userId, activityRecordByToken.resultTo);
+                Log.d(TAG, "DEBUG-LOOP: getCallingActivity for " + activityRecordByToken.component.flattenToShortString() 
+                    + " resultToToken=" + activityRecordByToken.resultTo 
+                    + " resultRecord=" + (resultTo == null ? "null" : resultTo.component.flattenToShortString()));
+                
                 if (resultTo != null) {
                     return resultTo.component;
                 }
+            } else {
+                Log.d(TAG, "DEBUG-LOOP: getCallingActivity token not found or null");
             }
-            return new ComponentName(BlackBoxCore.getHostPkg(), ProxyActivity.P0.class.getName());
+            // Return null when no real calling activity exists (Activity was not started for result).
+            // The previous ProxyActivity fallback was incorrect and caused apps like Coupang
+            // to enter infinite finish/restart loops in o0() which checks getCallingActivity() != null.
+            return null;
         }
     }
 

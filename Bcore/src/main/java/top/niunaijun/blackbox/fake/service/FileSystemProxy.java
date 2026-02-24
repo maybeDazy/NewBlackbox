@@ -86,7 +86,11 @@ public class FileSystemProxy extends ClassInvocationStub {
                 File file = (File) who;
                 String path = file.getAbsolutePath();
                 
-                
+                // Anti-rooting check
+                if (isRootPath(path)) {
+                    return false;
+                }
+
                 if (path.contains("Helium Crashpad") || path.contains("HeliumCrashReporter")) {
                     Slog.d(TAG, "FileSystem: isDirectory called for Helium crash path: " + path + ", returning true");
                     return true; 
@@ -99,4 +103,37 @@ public class FileSystemProxy extends ClassInvocationStub {
             }
         }
     }
+
+    @ProxyMethod("exists")
+    public static class Exists extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            try {
+                File file = (File) who;
+                String path = file.getAbsolutePath();
+                
+                // Anti-rooting check
+                if (isRootPath(path)) {
+                    return false;
+                }
+
+                return method.invoke(who, args);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+    }
+
+    private static boolean isRootPath(String path) {
+        String lowerPath = path.toLowerCase();
+        return lowerPath.contains("/su") || 
+               lowerPath.contains("/sbin/su") || 
+               lowerPath.contains("superuser") || 
+               lowerPath.contains("supersu") || 
+               lowerPath.contains("magisk") || 
+               lowerPath.contains("xposed") || 
+               lowerPath.contains("edxp") || 
+               lowerPath.contains("lsposed");
+    }
+    
 }
