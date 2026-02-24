@@ -79,6 +79,7 @@ import top.niunaijun.blackbox.fake.service.HCallbackProxy;
 import top.niunaijun.blackbox.utils.Reflector;
 import top.niunaijun.blackbox.utils.SafeContextWrapper;
 import top.niunaijun.blackbox.utils.GlobalContextWrapper;
+import top.niunaijun.blackbox.utils.CloneProfileConfig;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.ActivityManagerCompat;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
@@ -365,6 +366,7 @@ public class BActivityThread extends IBActivityThread.Stub {
 
         PackageInfo packageInfo = BlackBoxCore.getBPackageManager().getPackageInfo(packageName, PackageManager.GET_PROVIDERS, BActivityThread.getUserId());
         ApplicationInfo applicationInfo = packageInfo.applicationInfo;
+        applyCloneDeviceProfile(packageName, BActivityThread.getUserId());
         if (packageInfo.providers == null) {
             packageInfo.providers = new ProviderInfo[]{};
         }
@@ -486,6 +488,21 @@ public class BActivityThread extends IBActivityThread.Stub {
     }
     
     
+    private void applyCloneDeviceProfile(String packageName, int userId) {
+        try {
+            String spoofModel = CloneProfileConfig.getModel(packageName, userId);
+            if (spoofModel == null || spoofModel.trim().isEmpty()) {
+                return;
+            }
+            java.lang.reflect.Field modelField = android.os.Build.class.getDeclaredField("MODEL");
+            modelField.setAccessible(true);
+            modelField.set(null, spoofModel);
+            Slog.d(TAG, "Applied spoof model for " + packageName + "(u" + userId + "): " + spoofModel);
+        } catch (Throwable t) {
+            Slog.w(TAG, "Failed to apply spoof model", t);
+        }
+    }
+
     private void initializeJarEnvironment() {
         try {
             Slog.d(TAG, "Initializing JAR environment for DEX loading");
