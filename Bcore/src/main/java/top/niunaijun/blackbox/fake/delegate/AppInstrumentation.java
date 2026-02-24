@@ -108,6 +108,31 @@ public final class AppInstrumentation extends BaseInstrumentationDelegate implem
         checkHCallback();
         HookManager.get().checkEnv(IActivityClientProxy.class);
         ActivityInfo info = BRActivity.get(activity).mActivityInfo();
+        
+        // Force Hardware Acceleration
+        try {
+            activity.getWindow().setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+            );
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+
+        // Force Locale to Korean
+        try {
+            android.content.res.Resources res = activity.getResources();
+            android.content.res.Configuration config = new android.content.res.Configuration(res.getConfiguration());
+            java.util.Locale koKR = new java.util.Locale("ko", "KR");
+            config.setLocale(koKR);
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                config.setLocales(new android.os.LocaleList(koKR));
+            }
+            res.updateConfiguration(config, res.getDisplayMetrics());
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+
         ContextCompat.fix(activity);
         ActivityCompat.fix(activity);
         if (info.theme != 0) {
@@ -133,6 +158,63 @@ public final class AppInstrumentation extends BaseInstrumentationDelegate implem
     public void callActivityOnCreate(Activity activity, Bundle icicle) {
         checkActivity(activity);
         super.callActivityOnCreate(activity, icicle);
+    }
+
+
+    private final java.util.WeakHashMap<Activity, Boolean> mProcessedActivities = new java.util.WeakHashMap<>();
+
+    @Override
+    public void callActivityOnResume(Activity activity) {
+        super.callActivityOnResume(activity);
+        try {
+            if (mProcessedActivities.containsKey(activity)) {
+                return;
+            }
+            if (BActivityThread.getAppConfig() != null && BActivityThread.getAppConfig().spoofProps != null) {
+                String containerName = BActivityThread.getAppConfig().spoofProps.get("CONTAINER_NAME");
+                if (containerName != null && !containerName.isEmpty()) {
+                    android.view.View decorView = activity.getWindow().getDecorView();
+                    if (decorView instanceof android.view.ViewGroup) {
+                        android.view.ViewGroup root = (android.view.ViewGroup) decorView;
+                        
+                        // Check if we already added the overlay
+                        boolean found = false;
+                        for (int i = 0; i < root.getChildCount(); i++) {
+                            android.view.View child = root.getChildAt(i);
+                            if ("daize_overlay".equals(child.getTag())) {
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if (!found) {
+                            android.widget.TextView overlay = new android.widget.TextView(activity);
+                            overlay.setTag("daize_overlay");
+                            overlay.setText(containerName + " - @DaizePro");
+                            overlay.setTextColor(android.graphics.Color.WHITE);
+                            overlay.setBackgroundColor(0x80000000); // Semi-transparent black
+                            overlay.setPadding(20, 10, 20, 10);
+                            overlay.setTextSize(12);
+                            overlay.setGravity(android.view.Gravity.CENTER);
+                            
+                            android.widget.FrameLayout.LayoutParams params = new android.widget.FrameLayout.LayoutParams(
+                                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                            );
+                            params.gravity = android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL;
+                            params.topMargin = 100; // Leave space for status bar/action bar
+                            
+                            root.addView(overlay, params);
+                            overlay.bringToFront();
+                            
+                            mProcessedActivities.put(activity, true);
+                        }
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
