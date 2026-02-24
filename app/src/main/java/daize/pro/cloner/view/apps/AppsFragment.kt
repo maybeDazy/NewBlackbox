@@ -408,7 +408,7 @@ class AppsFragment : Fragment() {
     private fun initData() {
         try {
             if (!ensureViewModel()) {
-                viewBinding.stateView.showError()
+                viewBinding.stateView.showEmpty()
                 return
             }
             viewBinding.stateView.showLoading()
