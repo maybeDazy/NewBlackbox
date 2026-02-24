@@ -31,6 +31,9 @@ import static android.content.pm.PackageManager.GET_META_DATA;
 public class ActivityManagerCommonProxy {
     public static final String TAG = "CommonStub";
     private static final String ACTION_REQUEST_PERMISSIONS = "android.content.pm.action.REQUEST_PERMISSIONS";
+    // Some apps trigger multiple startActivity calls as part of startup handshakes.
+    // Keep throttling disabled by default to avoid introducing perceived launch lag.
+    private static final boolean ENABLE_ACTIVITY_THROTTLE = false;
     private static long sLastPermissionRequestUptime;
     private static String sLastPermissionRequestKey;
     private static long sLastProxyLaunchUptime;
@@ -269,6 +272,9 @@ public class ActivityManagerCommonProxy {
     }
 
     private static boolean isRapidDuplicateProxyLaunch(Intent intent) {
+        if (!ENABLE_ACTIVITY_THROTTLE) {
+            return false;
+        }
         if (intent == null) return false;
         ComponentName component = intent.getComponent();
         if (component == null) return false;
@@ -310,6 +316,9 @@ public class ActivityManagerCommonProxy {
     }
 
     private static boolean shouldThrottlePermissionRequest(Intent intent) {
+        if (!ENABLE_ACTIVITY_THROTTLE) {
+            return false;
+        }
         String key = BActivityThread.getAppPackageName() + "@" + BActivityThread.getUserId();
         long now = SystemClock.elapsedRealtime();
         synchronized (ActivityManagerCommonProxy.class) {
@@ -349,6 +358,9 @@ public class ActivityManagerCommonProxy {
     }
 
     private static boolean shouldThrottleSelfComponentLaunch(Intent intent) {
+        if (!ENABLE_ACTIVITY_THROTTLE) {
+            return false;
+        }
         if (intent == null) {
             return false;
         }

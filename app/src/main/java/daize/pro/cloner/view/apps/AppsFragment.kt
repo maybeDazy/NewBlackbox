@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.os.bundleOf
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.ItemTouchHelper
@@ -48,6 +49,7 @@ class AppsFragment : Fragment() {
     private val viewBinding: FragmentAppsBinding by inflate()
 
     private var popupMenu: PopupMenu? = null
+    private var pendingInstallSource: String? = null
 
     companion object {
         private const val TAG = "AppsFragment"
@@ -61,13 +63,21 @@ class AppsFragment : Fragment() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        try {
-            super.onCreate(savedInstanceState)
-            viewModel =
-                ViewModelProvider(this, InjectionUtil.getAppsFactory()).get(AppsViewModel::class.java)
-            userID = requireArguments().getInt("userID", 0)
+        super.onCreate(savedInstanceState)
+        userID = arguments?.getInt("userID", 0) ?: 0
+        ensureViewModel()
+    }
+
+    private fun ensureViewModel(): Boolean {
+        if (::viewModel.isInitialized) {
+            return true
+        }
+        return try {
+            viewModel = ViewModelProvider(this, InjectionUtil.getAppsFactory()).get(AppsViewModel::class.java)
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Error in onCreate: ${e.message}")
+            Log.e(TAG, "Failed to initialize AppsViewModel", e)
+            false
         }
     }
 
@@ -186,14 +196,24 @@ class AppsFragment : Fragment() {
             try {
                 BlackBoxCore.get().addServiceAvailableCallback {
                     Log.d(TAG, "Services became available, refreshing app list")
-                    
-                    viewModel.getInstalledAppsWithRetry(userID)
+                    if (ensureViewModel()) {
+                        viewModel.getInstalledAppsWithRetry(userID)
+                        pendingInstallSource?.let { source ->
+                            pendingInstallSource = null
+                            installApk(source)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error registering service available callback: ${e.message}")
             }
             
+            if (!ensureViewModel()) return
             viewModel.getInstalledAppsWithRetry(userID)
+            pendingInstallSource?.let { source ->
+                pendingInstallSource = null
+                installApk(source)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in onStart: ${e.message}")
         }
@@ -387,6 +407,10 @@ class AppsFragment : Fragment() {
     
     private fun initData() {
         try {
+            if (!ensureViewModel()) {
+                viewBinding.stateView.showError()
+                return
+            }
             viewBinding.stateView.showLoading()
             viewModel.getInstalledApps(userID)
             viewModel.appsLiveData.observe(viewLifecycleOwner) {
@@ -447,8 +471,10 @@ class AppsFragment : Fragment() {
     override fun onStop() {
         try {
             super.onStop()
-            viewModel.resultLiveData.value = null
-            viewModel.launchLiveData.value = null
+            if (::viewModel.isInitialized) {
+                viewModel.resultLiveData.value = null
+                viewModel.launchLiveData.value = null
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in onStop: ${e.message}")
         }
@@ -564,6 +590,16 @@ class AppsFragment : Fragment() {
 
     fun installApk(source: String) {
         try {
+            if (!isAdded || lifecycle.currentState == Lifecycle.State.INITIALIZED) {
+                pendingInstallSource = source
+                Log.w(TAG, "installApk called before fragment ready; queued source")
+                return
+            }
+            if (!ensureViewModel()) {
+                pendingInstallSource = source
+                Log.e(TAG, "Error installing APK: viewModel initialization failed; queued")
+                return
+            }
             showLoading()
             viewModel.install(source, if (userID < 0) 0 else userID)
         } catch (e: Exception) {
