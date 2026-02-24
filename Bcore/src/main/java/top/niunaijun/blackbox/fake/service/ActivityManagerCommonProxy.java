@@ -115,19 +115,8 @@ public class ActivityManagerCommonProxy {
                         BActivityThread.getUserId());
                 if (resolveInfo == null) {
                     intent.setPackage(origPackage);
-<<<<<<< HEAD
                     if (shouldBlockHostFallback(intent)) {
                         Slog.w(TAG, "Blocked host fallback for in-app deep link to avoid intent leak: " + intent);
-=======
-                    String targetPkg = intent.getPackage();
-                    if (targetPkg == null && intent.getComponent() != null) {
-                        targetPkg = intent.getComponent().getPackageName();
-                    }
-                    if (targetPkg != null && BlackBoxCore.getBPackageManager().isInstalled(targetPkg, BActivityThread.getUserId())) {
-                        // If the target package is installed inside BlackBox, we should not pass it to the host system.
-                        // This prevents crashes when the app tries to launch an internal activity that fails resolution (e.g. exported=false).
-                        Slog.e(TAG, "Blocked intent leak to host for installed package: " + targetPkg + ", Intent: " + intent);
->>>>>>> heads/main
                         return 0;
                     }
                     return method.invoke(who, args);
@@ -324,7 +313,6 @@ public class ActivityManagerCommonProxy {
         }
     }
 
-<<<<<<< HEAD
     private static boolean shouldBlockHostFallback(Intent intent) {
         if (intent == null) {
             return false;
@@ -352,7 +340,4 @@ public class ActivityManagerCommonProxy {
         String normalized = scheme.toLowerCase();
         return !("http".equals(normalized) || "https".equals(normalized));
     }
-
-=======
->>>>>>> heads/main
 }
