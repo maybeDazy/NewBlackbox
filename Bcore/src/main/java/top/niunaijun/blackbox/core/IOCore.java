@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.os.Environment;
 import android.os.Process;
 import android.text.TextUtils;
+import android.util.Log;
 
 import java.io.File;
 import java.util.HashMap;
@@ -70,8 +71,16 @@ public class IOCore {
 
         
         String key = mTrieTree.search(path);
-        if (!TextUtils.isEmpty(key))
-            path = path.replace(key, Objects.requireNonNull(mRedirectMap.get(key)));
+        if (!TextUtils.isEmpty(key)) {
+            String redirect = mRedirectMap.get(key);
+            if (redirect != null) {
+                String oldPath = path;
+                path = path.replace(key, redirect);
+                if (oldPath.contains("/user_de/")) {
+                    Log.d("IOCore", "DE Path Redirect: " + oldPath + " -> " + path);
+                }
+            }
+        }
 
         return path;
     }
@@ -118,7 +127,16 @@ public class IOCore {
             rule.put(String.format("/data/data/%s", packageName), packageInfo.dataDir);
             rule.put(String.format("/data/user/%d/%s", systemUserId, packageName), packageInfo.dataDir);
 
-            
+            if (packageInfo.deviceProtectedDataDir != null) {
+                rule.put(String.format("/data/user_de/%d/%s", systemUserId, packageName), BEnvironment.getDeDataDir(packageName, BlackBoxCore.getUserId()).getAbsolutePath());
+            }
+
+            // Also support generic data directory for other users if needed
+            rule.put(String.format("/data/user/%d/%s", BlackBoxCore.getUserId(), packageName), packageInfo.dataDir);
+            if (packageInfo.deviceProtectedDataDir != null) {
+                rule.put(String.format("/data/user_de/%d/%s", BlackBoxCore.getUserId(), packageName), BEnvironment.getDeDataDir(packageName, BlackBoxCore.getUserId()).getAbsolutePath());
+            }
+
             File profilesRoot = new File(BEnvironment.getVirtualRoot(), "profiles");
             FileUtils.mkdirs(profilesRoot.getAbsolutePath());
             
@@ -168,6 +186,13 @@ public class IOCore {
         rule.put("/system/bin/failsafe/su", "/system/bin/failsafe/su-fake");
         rule.put("/data/local/su", "/data/local/su-fake");
         rule.put("/su/bin/su", "/su/bin/su-fake");
+        
+        // Add more common detection paths
+        rule.put("/system/bin/magisk", "/system/bin/magisk-fake");
+        rule.put("/system/xbin/magisk", "/system/xbin/magisk-fake");
+        rule.put("/data/adb/magisk", "/data/adb/magisk-fake");
+        rule.put("/data/adb/modules", "/data/adb/modules-fake");
+        rule.put("/system/etc/init/magisk", "/system/etc/init/magisk-fake");
     }
 
     private void proc(Map<String, String> rule) {
